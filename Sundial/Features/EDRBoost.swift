@@ -59,13 +59,20 @@ final class EDRBoost {
     }
 }
 
-/// NSView backed by a CAMetalLayer configured for EDR. Renders a low-alpha extended-range
-/// frame; the system grants EDR headroom in response, which lifts the panel's overall backlight.
+/// NSView backed by a CAMetalLayer configured for EDR. Presents a continuous stream of
+/// extended-range frames (values > 1.0 in extendedLinearDisplayP3) — that signal is what
+/// the system uses to grant EDR headroom, which lifts the panel's overall backlight.
 @MainActor
 final class EDRMetalView: NSView {
     private let metalLayer = CAMetalLayer()
     private let commandQueue: MTLCommandQueue?
-    private var displayLink: CVDisplayLink?
+    private var redrawTimer: Timer?
+
+    /// Brightness multiplier requested from the panel. 2.0 = +1 stop above SDR, 3.0 ≈ +1.5 stops.
+    /// The visible luminance contribution is `edrValue * alpha`, so a high multiplier with low
+    /// alpha lets the panel ceiling rise without our overlay washing out the screen.
+    private let edrValue: Float = 2.5
+    private let alpha: Float = 0.05
 
     init(frame: NSRect, device: MTLDevice) {
         self.commandQueue = device.makeCommandQueue()
@@ -79,25 +86,48 @@ final class EDRMetalView: NSView {
         metalLayer.isOpaque = false
         metalLayer.framebufferOnly = false
         metalLayer.frame = bounds
+        // Critical for Retina: the drawable must be in pixels, not points.
+        let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2.0
+        metalLayer.contentsScale = scale
+        metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         layer = metalLayer
 
-        // Initial draw — and one per layout pass.
         DispatchQueue.main.async { [weak self] in
             self?.render()
+            self?.startContinuousRedraw()
         }
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
 
+    deinit {
+        redrawTimer?.invalidate()
+    }
+
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
+        if let scale = window?.backingScaleFactor {
+            metalLayer.contentsScale = scale
+            metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
+        }
         render()
     }
 
     override func layout() {
         super.layout()
+        let scale = window?.backingScaleFactor ?? metalLayer.contentsScale
         metalLayer.frame = bounds
+        metalLayer.drawableSize = CGSize(width: bounds.width * scale, height: bounds.height * scale)
         render()
+    }
+
+    /// Re-present at ~1 Hz. Cheap insurance against the system revoking EDR headroom when the
+    /// layer goes idle. If it turns out to be unnecessary on this hardware, drop the timer.
+    private func startContinuousRedraw() {
+        redrawTimer?.invalidate()
+        redrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+            Task { @MainActor in self?.render() }
+        }
     }
 
     private func render() {
@@ -107,16 +137,15 @@ final class EDRMetalView: NSView {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = drawable.texture
         pass.colorAttachments[0].loadAction = .clear
-        // Premultiplied EDR pixel: (R,G,B) already multiplied by alpha. We want the panel to
-        // "see" extended-range white at low effective opacity. The actual luminance contribution
-        // to the composite is small (so the screen doesn't look obviously washed out), but the
-        // EDR signal lifts the backlight ceiling for the whole display.
-        let alpha: Float = 0.04
-        let edrWhite: Float = 4.0 * alpha   // premultiplied
+        // CAMetalLayer with rgba16Float uses premultiplied alpha — the values written to clearColor
+        // ARE the final framebuffer pixel values, already premultiplied. Writing values >1.0 in
+        // extendedLinearDisplayP3 is what asks the system for EDR headroom; the panel responds by
+        // lifting its backlight ceiling, which brightens ALL on-screen content.
+        let premulRGB = Double(edrValue)
         pass.colorAttachments[0].clearColor = MTLClearColor(
-            red:   Double(edrWhite),
-            green: Double(edrWhite),
-            blue:  Double(edrWhite),
+            red:   premulRGB,
+            green: premulRGB,
+            blue:  premulRGB,
             alpha: Double(alpha)
         )
         pass.colorAttachments[0].storeAction = .store
