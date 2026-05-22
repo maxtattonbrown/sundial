@@ -1,0 +1,31 @@
+name: Sundial
+options:
+  bundleIdPrefix: com.maxtb
+  deploymentTarget:
+    macOS: "14.0"
+  xcodeVersion: "16.0"
+  minimumXcodeGenVersion: "2.38.0"
+  createIntermediateGroups: true
+targets:
+  Sundial:
+    type: application
+    platform: macOS
+    sources:
+      - Sundial
+    settings:
+      base:
+        PRODUCT_NAME: Sundial
+        PRODUCT_BUNDLE_IDENTIFIER: com.maxtb.sundial
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        MACOSX_DEPLOYMENT_TARGET: "14.0"
+        SWIFT_VERSION: "5.9"
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.utilities"
+        INFOPLIST_KEY_CFBundleDisplayName: "Sundial"
+        INFOPLIST_KEY_LSUIElement: "YES"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Max Tatton-Brown"
+        ENABLE_APP_SANDBOX: NO
+        ENABLE_HARDENED_RUNTIME: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Automatic
+        GENERATE_INFOPLIST_FILE: YES
