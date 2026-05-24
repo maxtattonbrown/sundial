@@ -20,6 +20,10 @@ struct SundialView: View {
         }
         .padding(16)
         .frame(width: 280)
+        // The PopoverPanel container is intentionally transparent so SwiftUI materials
+        // render cleanly — so the background lives here. `.regularMaterial` matches
+        // Apple's own menu bar extras (Control Center, Wi-Fi, battery).
+        .background(.regularMaterial)
     }
 
     // MARK: - Sections
