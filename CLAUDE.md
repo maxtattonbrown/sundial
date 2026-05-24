@@ -66,3 +66,21 @@ The visible luminance contribution at the composite step is roughly `edrValue * 
 ### Keyboard backlight injection requires Accessibility
 
 `NSEvent.systemDefined` subtype-8 events (the F5/F6 illumination keys) need Accessibility permission to inject. Sundial checks `AXIsProcessTrusted()` and silently no-ops if denied — Mr.Maximilian can grant later via System Settings → Privacy & Security → Accessibility. On some macOS versions this path may be locked down even with Accessibility granted; if keyboard backlight doesn't drop when Sundial engages, this is the suspect.
+
+### `AXIsProcessTrusted()` is cached at launch
+
+Granting Accessibility while Sundial is running does NOT flip `AXIsProcessTrusted()` to true — the trust state is cached per-process at launch. User must quit and reopen Sundial after granting. This is a macOS-wide quirk that affects every accessibility-using app (Karabiner-Elements, BTT, etc.). The accessibility warning row in the popover surfaces this explicitly with a "Quit Sundial" button so the relaunch is one click.
+
+### macOS auto-brightness slider caps below 1.0
+
+In direct sun on Apple Silicon, `DisplayServicesGetBrightness` returns approximately 0.98, NOT 1.0. macOS auto-brightness reserves headroom (~2%) for True Tone / Night Shift / HDR rendering on top of the user-visible brightness target. Undocumented but consistent across machines.
+
+**Implication for thresholds:** anything looking for "user wants max brightness" must use a threshold of ~0.95, not 0.99 or 1.0. Sundial v0.2.0-v0.2.1 had a 0.99 engage threshold and never fired in real outdoor conditions. Pinned by `test_engagesWhenAutoBrightnessCapsBelow1` in `Tests/BoostTriggerTests.swift`.
+
+Future investigation: read the ambient light sensor directly via IOKit (the Apple Silicon successor to `AppleLMUController`) to bypass the slider proxy entirely. Planned as v0.3 work.
+
+### Test data leaks into production UserDefaults
+
+Default Xcode test targets run **in the host app's process**, so `UserDefaults.standard` in a test points to `com.maxtb.sundial.plist` — the same plist the real app reads. Tests that write to `UserDefaults.standard` will pollute the user's actual app state.
+
+`DailySunLog` and any future persistence layer must accept an injected `UserDefaults` instance and tests must use `UserDefaults(suiteName: "Sundial.tests.\(UUID())")` with cleanup in `tearDown`. Pinned by `test_doesNotLeakIntoStandardDefaults`.
