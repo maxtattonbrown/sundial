@@ -11,11 +11,6 @@ struct SundialView: View {
         VStack(alignment: .leading, spacing: 14) {
             header
 
-            if manager.isOn && !manager.accessibilityGranted {
-                Divider()
-                accessibilityWarning
-            }
-
             Divider()
             statusBlock
 
@@ -61,35 +56,6 @@ struct SundialView: View {
             Toggle("", isOn: $manager.isOn)
                 .toggleStyle(.switch)
                 .labelsHidden()
-        }
-    }
-
-    private var accessibilityWarning: some View {
-        HStack(alignment: .top, spacing: 8) {
-            Image(systemName: "exclamationmark.triangle.fill")
-                .foregroundStyle(.yellow)
-                .font(.subheadline)
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Keyboard backlight needs Accessibility")
-                    .font(.caption)
-                Text("Grant the permission in System Settings, then quit and reopen Sundial — macOS caches the trust status at launch, so the change won't take effect until you relaunch.")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-                HStack(spacing: 6) {
-                    Button("Grant in System Settings") {
-                        manager.openAccessibilitySettings()
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .controlSize(.small)
-                    Button("Quit Sundial") {
-                        NSApplication.shared.terminate(nil)
-                    }
-                    .buttonStyle(.bordered)
-                    .controlSize(.small)
-                }
-                .padding(.top, 2)
-            }
         }
     }
 

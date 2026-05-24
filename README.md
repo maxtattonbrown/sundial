@@ -14,7 +14,6 @@ Sundial unlocks that headroom *only when you need it*.
 - **Sun-aware** (v0.2). Knows where the sun is in your sky, how bright it actually is outside (W/m², via Open-Meteo), and when it's setting. Sundial *is* a sundial.
 - **Today in the sun** panel — passively tracks how long the boost has been engaged, the average UV during boost time, and a fuzzy Vitamin D estimate. The menu bar icon develops a tan as the day's outdoor minutes add up.
 - **Soft engage/disengage.** The boost eases on over 800ms and off over 1.2s — sun-coming-out-from-behind-a-cloud rather than a light switch.
-- **Keyboard backlight off.** Invisible in sunlight anyway. Frees a tiny but free watt of battery.
 - **Honest battery cost indicator.** Measures the real wattage delta on your specific machine via `ioreg AppleSmartBattery`, projects it as "≈ −N min / hr" so you can see what the boost actually costs.
 
 There are paid apps (Vivid, BetterDisplay) that sell a permanent brightness boost. Sundial's bet is that **permanent boost is the wrong shape** — the auto-brightness in macOS is already doing the right thing, and the only honest job for an outdoor mode is to top it up reactively, then tell you a story about the time you spent in the sun.
@@ -102,7 +101,6 @@ The "Today in the sun" panel includes a Vitamin D percentage. This is **not medi
 
 | Permission | Why | What happens if denied |
 |---|---|---|
-| **Accessibility** | Inject the F5 illumination-down key event to drop the keyboard backlight | Sundial keeps working; the keyboard backlight feature silently sits out. The popover prompts you to grant it via System Settings. |
 | **Location** (v0.2+) | Compute the sun's position in your sky and fetch local weather (Open-Meteo) | Sundial keeps working — the boost trigger doesn't depend on it. The "Today in the sun" panel hides and prompts you to grant location. |
 | **App Sandbox** | Disabled — sandboxed processes can't `dlopen` the private `DisplayServices.framework` we need for brightness polling | Sundial doesn't ship via the App Store; this is a local-distribution tool. |
 
@@ -110,7 +108,7 @@ The "Today in the sun" panel includes a Vitamin D percentage. This is **not medi
 
 - **Mini-LED panels only.** The EDR brightness boost works on MacBook Pro M1 Pro/Max and later, and Pro Display XDR. It will technically run on Air models / older MBPs but won't visibly boost brightness because the panel can't.
 - **Multi-display behaviour is naïve.** Sundial puts an EDR layer on every connected screen when engaged. Per-display tuning is out of scope for v0.1.
-- **The keyboard backlight feature is currently unreliable on macOS 14+.** The `NSEvent.systemDefined` illumination-key route appears to be locked down for background `LSUIElement` apps regardless of Accessibility status. v0.2.1 attempts a timestamp fix; if your keyboard backlight doesn't drop when Sundial engages, that's the known issue. Switching to IOKit `AppleKeyboardBacklight` directly is the planned v0.3 fix.
+- **Keyboard-backlight-off feature was removed in v0.2.3.** The `NSEvent.systemDefined` route was unreliable on macOS 14+ for menu-bar (`LSUIElement`) apps regardless of Accessibility status. The feature may return in v0.3+ via IOKit `AppleKeyboardBacklight` once that's prototyped against real hardware.
 - **Battery cost is qualitative.** The 70Wh constant is a rough M1/M2/M3 14" approximation. The displayed delta is real (measured discharge wattage), the projection to "minutes lost" is an estimate.
 - **No app icon yet.** Menu bar uses the SF Symbol `sun.max.fill`. A real icon would be nice.
 
@@ -128,7 +126,6 @@ Sundial/
 │   └── SundialView.swift          # SwiftUI popover content
 ├── Features/
 │   ├── EDRBoost.swift             # Per-screen EDR Metal layer + eased engage/disengage
-│   ├── KeyboardBacklight.swift    # NSEvent.systemDefined illumination keys
 │   └── BatteryCost.swift          # ioreg AppleSmartBattery sampling
 └── Utilities/
     ├── BrightnessPoller.swift     # dlopen DisplayServicesGetBrightness

@@ -40,7 +40,6 @@ final class SundialManager {
     var currentOSBrightness: Double = 0.0
     var batteryCostMinutesPerHour: Int? = nil
     var batteryPercent: Int = 100
-    var accessibilityGranted: Bool = false
 
     let solar = SolarContext()
     let dailyLog = DailySunLog()
@@ -48,7 +47,6 @@ final class SundialManager {
     // MARK: - Collaborators
 
     private let edr = EDRBoost()
-    private let keyboard = KeyboardBacklight()
     private let cost = BatteryCost()
     private var poller: BrightnessPoller?
     private var trigger = BoostTrigger()
@@ -70,10 +68,6 @@ final class SundialManager {
         }
         poller?.start()
 
-        accessibilityGranted = keyboard.isAccessibilityGranted
-
-        // Solar context starts whenever Sundial is on. Don't fire a location prompt at launch
-        // for users who haven't even toggled it yet.
         if isOn {
             onEnable()
         }
@@ -82,14 +76,11 @@ final class SundialManager {
     // MARK: - Toggle lifecycle
 
     private func onEnable() {
-        accessibilityGranted = keyboard.isAccessibilityGranted
-        keyboard.engage()
         solar.start()
     }
 
     private func onDisable() {
         edr.disengage()
-        keyboard.disengage()
         state = .dormant
         batteryCostMinutesPerHour = nil
         cost.stopSampling()
@@ -101,7 +92,6 @@ final class SundialManager {
     private func handleBrightness(_ brightness: Double) {
         currentOSBrightness = brightness
         batteryPercent = cost.batteryPercent()
-        accessibilityGranted = keyboard.isAccessibilityGranted
 
         // Tally engaged time even after the toggle is flipped off mid-poll — but only if it was
         // already engaged at the start of this poll cycle.
@@ -141,14 +131,5 @@ final class SundialManager {
         state = .dormant
         batteryCostMinutesPerHour = nil
         cost.stopSampling()
-    }
-
-    // MARK: - Manual user actions
-
-    /// Opens System Settings → Privacy & Security → Accessibility so the user can grant permission.
-    func openAccessibilitySettings() {
-        let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-        guard let url = URL(string: urlString) else { return }
-        NSWorkspace.shared.open(url)
     }
 }

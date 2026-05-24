@@ -1,10 +1,13 @@
 # Sundial
 
-Menu-bar app for Mr.Maximilian's MacBook Pro that makes it usable outdoors. Three features only:
+Menu-bar app for Mr.Maximilian's MacBook Pro that makes it usable outdoors. Two features (post v0.2.3):
 
-1. **Reactive EDR brightness boost** — engages only when the OS brightness slider is already pinned at max and stays high (≥0.99 sustained). Disengages with hysteresis (≤0.95 for 10s) so brightness flutter doesn't oscillate the boost.
-2. **Keyboard backlight off** — pushed to zero via simulated F5 illumination-down events when Sundial is on. Restored via F6 on disable. Requires Accessibility permission.
-3. **Battery cost indicator** — reads `ioreg AppleSmartBattery` Amperage × Voltage before/after engaging boost. Displays real measured delta as "≈ −X min/hr battery". Goes red below 30%.
+1. **Reactive EDR brightness boost** — engages when the OS brightness slider crosses 0.95 sustained and disengages with hysteresis (≤0.85 for 10s). Threshold tuned to macOS auto-brightness reality: the slider caps at ~0.98 in direct sun, never literally 1.0.
+2. **Battery cost indicator** — reads `ioreg AppleSmartBattery` Amperage × Voltage before/after engaging boost. Displays real measured delta as "≈ −X min/hr battery". Goes red below 30%.
+
+Plus solar awareness (sun position, sunset countdown, "Today in the Sun" log with fuzzy Vitamin D %) and a tan-tint menu bar icon that accumulates colour as the day's boost minutes add up.
+
+**Removed in v0.2.3:** Keyboard-backlight-off feature. The `NSEvent.systemDefined` route was unreliable on macOS 14+ for `LSUIElement` apps and the Accessibility permission UX was confusing. Removed cleanly rather than left half-working. May return in v0.3+ via the IOKit `AppleKeyboardBacklight` route once that's prototyped against real hardware.
 
 True Tone is intentionally **not** included — under blue daylight it shifts cooler, which actually helps outdoor readability. See plan at `~/.claude/plans/could-we-make-it-swift-mountain.md`.
 
@@ -23,16 +26,19 @@ The `.xcodeproj` is gitignored — always regenerated from `project.yml`.
 
 - `Sundial/SundialApp.swift` — @main, NSApplicationDelegateAdaptor wiring
 - `Sundial/State/SundialManager.swift` — `@Observable` master state, owns the engaged/dormant state machine
-- `Sundial/UI/PopoverPanel.swift` — custom NSPanel + StatusBarController (forked from `~/Projects/desk-controller/`)
+- `Sundial/State/BoostTrigger.swift` — pure hysteresis state machine, testable
+- `Sundial/State/DailySunLog.swift` — today's boost minutes + Vitamin D math, UserDefaults-persisted
+- `Sundial/UI/PopoverPanel.swift` — custom NSPanel + StatusBarController + tan-tint icon
 - `Sundial/UI/SundialView.swift` — SwiftUI popover content
-- `Sundial/Features/EDRBoost.swift` — Metal EDR layer per NSScreen; renders fullscreen low-alpha extended-range white to lift the panel ceiling
-- `Sundial/Features/KeyboardBacklight.swift` — NSEvent.systemDefined illumination keys (F5/F6) via accessibility
+- `Sundial/Features/EDRBoost.swift` — Metal EDR layer per NSScreen + eased engage/disengage transitions
 - `Sundial/Features/BatteryCost.swift` — ioreg AppleSmartBattery sampling
 - `Sundial/Utilities/BrightnessPoller.swift` — dlopen DisplayServicesGetBrightness, polls every 3s
+- `Sundial/Utilities/SunPosition.swift` — Schlyter's algorithm, offline sun position math
+- `Sundial/Utilities/SolarContext.swift` — CLLocationManager + Open-Meteo weather/sunset
 
 ## Permissions
 
-- **Accessibility** — needed only for the keyboard-backlight feature (sends F5/F6 illumination key events). Prompted on first toggle-on; Sundial proceeds without it (keyboard feature silently no-ops).
+- **Location** — used to compute the sun's position and fetch local weather from Open-Meteo. Prompted on first toggle-on; Sundial keeps boosting without it (the "Today in the Sun" panel just hides).
 - **No app sandbox** — needed because `dlopen` of `/System/Library/PrivateFrameworks/DisplayServices.framework` is blocked in a sandboxed process. Distributed locally only.
 
 ## Gotchas
@@ -62,14 +68,6 @@ The visible luminance contribution at the composite step is roughly `edrValue * 
 ### `metalLayer.drawableSize` must be in pixels on Retina
 
 `metalLayer.frame = bounds` is in points (½ resolution on Retina). Set `drawableSize` to `bounds * backingScaleFactor` to render at native resolution. Some EDR pipelines won't grant headroom for a layer mismatched to its display's native res.
-
-### Keyboard backlight injection requires Accessibility
-
-`NSEvent.systemDefined` subtype-8 events (the F5/F6 illumination keys) need Accessibility permission to inject. Sundial checks `AXIsProcessTrusted()` and silently no-ops if denied — Mr.Maximilian can grant later via System Settings → Privacy & Security → Accessibility. On some macOS versions this path may be locked down even with Accessibility granted; if keyboard backlight doesn't drop when Sundial engages, this is the suspect.
-
-### `AXIsProcessTrusted()` is cached at launch
-
-Granting Accessibility while Sundial is running does NOT flip `AXIsProcessTrusted()` to true — the trust state is cached per-process at launch. User must quit and reopen Sundial after granting. This is a macOS-wide quirk that affects every accessibility-using app (Karabiner-Elements, BTT, etc.). The accessibility warning row in the popover surfaces this explicitly with a "Quit Sundial" button so the relaunch is one click.
 
 ### macOS auto-brightness slider caps below 1.0
 
