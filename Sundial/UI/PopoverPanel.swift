@@ -97,21 +97,59 @@ final class StatusBarController: NSObject {
     }
 
     private func iconImage(for manager: SundialManager) -> NSImage? {
-        let name: String
+        // Glyph reflects state: filled-with-warning when engaged + low battery, filled when
+        // boosting, outline when dormant or off.
+        let baseName: String
         if !manager.isOn {
-            name = "sun.max"
-        } else if manager.batteryPercent < 30 {
-            name = "sun.max.trianglebadge.exclamationmark.fill"
+            baseName = "sun.max"
+        } else if manager.batteryPercent < 30 && manager.state == .engaged {
+            baseName = "sun.max.trianglebadge.exclamationmark"
         } else if manager.state == .engaged {
-            name = "sun.max.fill"
+            baseName = "sun.max.fill"
         } else {
-            name = "sun.max"
+            baseName = "sun.max"
         }
-        return NSImage(systemSymbolName: name, accessibilityDescription: "Sundial")
+
+        // Tan tint — derived from today's accumulated boost minutes. At 0 minutes the icon is
+        // template (system menu bar colour). As the day's sun adds up, the icon warms toward
+        // orange, saturating at 2h. Resets at midnight (DailySunLog handles that).
+        let tan = manager.dailyLog.tanFraction
+        if tan < 0.05 {
+            let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")
+            image?.isTemplate = true
+            return image
+        }
+
+        let neutralGray = NSColor(white: 0.5, alpha: 1.0)
+        let tannedOrange = NSColor.systemOrange
+        let tint = neutralGray.blended(withFraction: tan, of: tannedOrange) ?? .systemOrange
+        let config = NSImage.SymbolConfiguration(paletteColors: [tint])
+        let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")?
+            .withSymbolConfiguration(config)
+        image?.isTemplate = false
+        return image
+    }
+
+    private func tooltip(for manager: SundialManager) -> String {
+        if !manager.isOn {
+            return "Sundial — Off"
+        }
+        switch manager.state {
+        case .dormant:
+            return "Sundial — Waiting for sun"
+        case .engaged:
+            if let cost = manager.batteryCostMinutesPerHour {
+                return "Sundial — Boosting (≈ −\(cost) min/hr battery)"
+            }
+            return "Sundial — Boosting"
+        }
     }
 
     private func refreshIcon() {
+        // Triggers midnight rollover for the daily log if needed, before we read tanFraction.
+        manager.dailyLog.rolloverIfNeeded()
         statusItem.button?.image = iconImage(for: manager)
+        statusItem.button?.toolTip = tooltip(for: manager)
     }
 
     @objc private func togglePanel() {

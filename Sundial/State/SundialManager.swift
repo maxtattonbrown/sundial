@@ -1,6 +1,6 @@
-// ABOUTME: Master state for Sundial — owns isOn, drives the BoostTrigger, runs side effects.
-// ABOUTME: Trigger logic lives in BoostTrigger (testable). This class owns side effects (EDR, keyboard,
-// ABOUTME: battery cost), UI-bound published state, and the BrightnessPoller subscription.
+// ABOUTME: Master state for Sundial — owns isOn, drives the BoostTrigger, runs side effects,
+// ABOUTME: aggregates daily stats via DailySunLog, wires solar context for the "Today in the Sun" UI.
+// ABOUTME: Trigger logic is in BoostTrigger (testable); this class is the orchestration layer.
 
 import Foundation
 import Observation
@@ -42,6 +42,9 @@ final class SundialManager {
     var batteryPercent: Int = 100
     var accessibilityGranted: Bool = false
 
+    let solar = SolarContext()
+    let dailyLog = DailySunLog()
+
     // MARK: - Collaborators
 
     private let edr = EDRBoost()
@@ -50,26 +53,30 @@ final class SundialManager {
     private var poller: BrightnessPoller?
     private var trigger = BoostTrigger()
 
+    private let pollIntervalSeconds: Double = 3.0
+
     // MARK: - Init
 
     private init() {
-        // UserDefaults.standard.bool(forKey:) returns false for missing keys — fine default.
         self.isOn = UserDefaults.standard.bool(forKey: isOnKey)
 
-        // For numeric values we need a manual default to preserve "missing" semantics.
         let storedStrength = UserDefaults.standard.object(forKey: strengthKey) as? Double
         self.boostStrength = storedStrength ?? 2.5
 
         edr.boostStrength = Float(boostStrength)
 
-        poller = BrightnessPoller(interval: 3.0) { [weak self] brightness in
+        poller = BrightnessPoller(interval: pollIntervalSeconds) { [weak self] brightness in
             self?.handleBrightness(brightness)
         }
         poller?.start()
 
         accessibilityGranted = keyboard.isAccessibilityGranted
 
-        if isOn { onEnable() }
+        // Solar context starts whenever Sundial is on. Don't fire a location prompt at launch
+        // for users who haven't even toggled it yet.
+        if isOn {
+            onEnable()
+        }
     }
 
     // MARK: - Toggle lifecycle
@@ -77,6 +84,7 @@ final class SundialManager {
     private func onEnable() {
         accessibilityGranted = keyboard.isAccessibilityGranted
         keyboard.engage()
+        solar.start()
     }
 
     private func onDisable() {
@@ -88,12 +96,22 @@ final class SundialManager {
         trigger.reset()
     }
 
-    // MARK: - Reactive trigger
+    // MARK: - Reactive trigger + daily tick
 
     private func handleBrightness(_ brightness: Double) {
         currentOSBrightness = brightness
         batteryPercent = cost.batteryPercent()
         accessibilityGranted = keyboard.isAccessibilityGranted
+
+        // Tally engaged time even after the toggle is flipped off mid-poll — but only if it was
+        // already engaged at the start of this poll cycle.
+        if state == .engaged {
+            dailyLog.tick(
+                durationMinutes: pollIntervalSeconds / 60.0,
+                uvIndex: solar.currentUVIndex,
+                irradiance: solar.currentIrradiance
+            )
+        }
 
         guard isOn else { return }
 

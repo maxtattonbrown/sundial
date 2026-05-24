@@ -38,6 +38,7 @@ targets:
         INFOPLIST_KEY_CFBundleDisplayName: "Sundial"
         INFOPLIST_KEY_LSUIElement: "YES"
         INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Max Tatton-Brown"
+        INFOPLIST_KEY_NSLocationUsageDescription: "Sundial uses your location to compute the sun's position and fetch local weather (Open-Meteo). No account, no tracking, no data shared with any other service."
         ENABLE_APP_SANDBOX: NO
         ENABLE_HARDENED_RUNTIME: YES
         CODE_SIGN_IDENTITY: "-"

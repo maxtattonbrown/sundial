@@ -1,5 +1,6 @@
-// ABOUTME: Popover content — master toggle, status, accessibility prompt, boost slider, battery cost.
-// ABOUTME: Pure SwiftUI; bound to SundialManager via @Bindable for two-way isOn binding.
+// ABOUTME: Popover content — master toggle, status, accessibility prompt, boost slider,
+// ABOUTME: "Today in the Sun" panel (boost minutes + Vitamin D + sun position + sunset), battery.
+// ABOUTME: Pure SwiftUI; bound to SundialManager via @Bindable.
 
 import SwiftUI
 
@@ -21,6 +22,15 @@ struct SundialView: View {
             if manager.isOn {
                 Divider()
                 strengthSlider
+
+                if manager.solar.availability == .ready {
+                    Divider()
+                    todayInTheSun
+                } else if manager.solar.availability == .noLocation {
+                    Divider()
+                    locationPrompt
+                }
+
                 Divider()
                 batteryBlock
             }
@@ -30,9 +40,6 @@ struct SundialView: View {
         }
         .padding(16)
         .frame(width: 280)
-        // The PopoverPanel container is intentionally transparent so SwiftUI materials
-        // render cleanly — so the background lives here. `.regularMaterial` matches
-        // Apple's own menu bar extras (Control Center, Wi-Fi, battery).
         .background(.regularMaterial)
     }
 
@@ -120,6 +127,89 @@ struct SundialView: View {
         }
     }
 
+    // MARK: - Today in the Sun
+
+    private var todayInTheSun: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Today in the sun")
+                .font(.caption.smallCaps())
+                .foregroundStyle(.secondary)
+
+            // Minutes engaged
+            HStack(spacing: 6) {
+                Image(systemName: "sun.max.fill").foregroundStyle(.orange)
+                Text(manager.dailyLog.formattedMinutes)
+                    .font(.subheadline.monospacedDigit())
+                Text("boosting")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+
+            // Vitamin D — optimistic-fuzzy
+            HStack(spacing: 6) {
+                Image(systemName: "pills.fill").foregroundStyle(vitaminDColor)
+                Text("\(manager.dailyLog.vitaminDPercent)%")
+                    .font(.subheadline.monospacedDigit())
+                Text("Vitamin D")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("est.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            // Sun position
+            HStack(spacing: 6) {
+                Image(systemName: "location.north.circle.fill")
+                    .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(manager.solar.sunAzimuth))
+                Text(sunPositionLabel)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text("\(Int(manager.solar.currentIrradiance.rounded())) W/m²")
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+            }
+
+            // Sunset countdown
+            if let sunset = manager.solar.sunsetToday {
+                HStack(spacing: 6) {
+                    Image(systemName: "sunset.fill")
+                        .foregroundStyle(.orange.opacity(0.7))
+                    Text(sunsetLabel(sunset))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                }
+            }
+        }
+    }
+
+    private var locationPrompt: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "location.slash.fill")
+                .foregroundStyle(.secondary)
+                .font(.subheadline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Location is off")
+                    .font(.caption)
+                Text("Grant location to see sun position, Vitamin D estimate and sunset time.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+                Button("Open Location Settings") {
+                    manager.solar.openLocationSettings()
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .padding(.top, 2)
+            }
+        }
+    }
+
     private var batteryBlock: some View {
         HStack(spacing: 8) {
             Image(systemName: batteryGlyph)
@@ -173,6 +263,33 @@ struct SundialView: View {
         }
     }
 
+    private var sunPositionLabel: String {
+        let elev = Int(manager.solar.sunElevation.rounded())
+        if elev <= 0 {
+            return "Sun below horizon"
+        }
+        let dir = Sun.compass(manager.solar.sunAzimuth)
+        return "Sun \(elev)° \(dir)"
+    }
+
+    private func sunsetLabel(_ sunset: Date) -> String {
+        let now = Date()
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:mm"
+        let timeStr = formatter.string(from: sunset)
+        let interval = sunset.timeIntervalSince(now)
+        if interval < 0 {
+            return "Sun set at \(timeStr)"
+        }
+        let minutes = Int(interval / 60)
+        if minutes < 60 {
+            return "Sunset \(timeStr) (in \(minutes) min)"
+        }
+        let hours = minutes / 60
+        let mins = minutes % 60
+        return "Sunset \(timeStr) (in \(hours)h \(mins)m)"
+    }
+
     private var batteryGlyph: String {
         let p = manager.batteryPercent
         if p >= 75 { return "battery.100" }
@@ -183,5 +300,12 @@ struct SundialView: View {
 
     private var batteryColor: Color {
         manager.batteryPercent < 30 ? .red : .secondary
+    }
+
+    private var vitaminDColor: Color {
+        let p = manager.dailyLog.vitaminDPercent
+        if p >= 80 { return .green }
+        if p >= 40 { return .orange }
+        return .secondary
     }
 }

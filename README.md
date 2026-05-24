@@ -11,10 +11,13 @@ You take your MacBook Pro outside. The screen vanishes in direct sun because mac
 Sundial unlocks that headroom *only when you need it*.
 
 - **Reactive brightness boost.** When macOS's brightness slider is pinned at max and stays there, Sundial requests EDR headroom from the panel — which lifts the backlight ceiling for everything on screen, not just our overlay. When you walk into shade and brightness drops, Sundial disengages within ten seconds. No always-on cost.
+- **Sun-aware** (v0.2). Knows where the sun is in your sky, how bright it actually is outside (W/m², via Open-Meteo), and when it's setting. Sundial *is* a sundial.
+- **Today in the sun** panel — passively tracks how long the boost has been engaged, the average UV during boost time, and a fuzzy Vitamin D estimate. The menu bar icon develops a tan as the day's outdoor minutes add up.
+- **Soft engage/disengage.** The boost eases on over 800ms and off over 1.2s — sun-coming-out-from-behind-a-cloud rather than a light switch.
 - **Keyboard backlight off.** Invisible in sunlight anyway. Frees a tiny but free watt of battery.
 - **Honest battery cost indicator.** Measures the real wattage delta on your specific machine via `ioreg AppleSmartBattery`, projects it as "≈ −N min / hr" so you can see what the boost actually costs.
 
-That's it. Three features. There are paid apps (Vivid, BetterDisplay) that sell a permanent brightness boost. Sundial's bet is that **permanent boost is the wrong shape** — the auto-brightness in macOS is already doing the right thing, and the only honest job for an outdoor mode is to top it up reactively.
+There are paid apps (Vivid, BetterDisplay) that sell a permanent brightness boost. Sundial's bet is that **permanent boost is the wrong shape** — the auto-brightness in macOS is already doing the right thing, and the only honest job for an outdoor mode is to top it up reactively, then tell you a story about the time you spent in the sun.
 
 ## Install
 
@@ -83,11 +86,24 @@ Sundial samples the laptop's instantaneous discharge wattage from `ioreg AppleSm
 
 No modelling, no manufacturer-quoted figures — just measurement.
 
+### Sun position
+
+Sundial computes the sun's azimuth and elevation locally via [Schlyter's algorithm](https://stjarnhimlen.se/comp/ppcomp.html) — ~100 lines of pure math, accurate to 0.01°, no network, no API key. It needs your latitude/longitude (from `CLLocationManager`, ~3km accuracy is plenty). The popover shows the sun's height and bearing in real time.
+
+### Weather and sunset (Open-Meteo)
+
+For irradiance (W/m²), UV index, cloud cover, and accurate sunrise/sunset times, Sundial fetches from [Open-Meteo](https://open-meteo.com) — a free, no-account, no-API-key weather service. Refresh interval is 15 minutes; the data is cached between fetches. If you're offline, sun position keeps working (it's offline math); irradiance and sunset gracefully fall back to "unknown."
+
+### The fuzzy Vitamin D estimate
+
+The "Today in the sun" panel includes a Vitamin D percentage. This is **not medical** — it's a fuzzy heuristic: `UV_index × minutes_boosted ≈ percentage of daily target`, capped at 100%, zeroed below UV 1. The reference point: 20 minutes at UV 5 ≈ 100%. It's a story your laptop tells you about your day in the sun, not a clinical reading.
+
 ## Permissions
 
 | Permission | Why | What happens if denied |
 |---|---|---|
 | **Accessibility** | Inject the F5 illumination-down key event to drop the keyboard backlight | Sundial keeps working; the keyboard backlight feature silently sits out. The popover prompts you to grant it via System Settings. |
+| **Location** (v0.2+) | Compute the sun's position in your sky and fetch local weather (Open-Meteo) | Sundial keeps working — the boost trigger doesn't depend on it. The "Today in the sun" panel hides and prompts you to grant location. |
 | **App Sandbox** | Disabled — sandboxed processes can't `dlopen` the private `DisplayServices.framework` we need for brightness polling | Sundial doesn't ship via the App Store; this is a local-distribution tool. |
 
 ## Limitations
@@ -105,18 +121,24 @@ Sundial/
 ├── SundialApp.swift               # @main, NSApplicationDelegateAdaptor wiring
 ├── State/
 │   ├── SundialManager.swift       # @Observable, owns side effects + isOn + persistence
-│   └── BoostTrigger.swift         # Pure hysteresis state machine (testable)
+│   ├── BoostTrigger.swift         # Pure hysteresis state machine (testable)
+│   └── DailySunLog.swift          # Today's outdoor stats (UserDefaults, midnight rollover)
 ├── UI/
-│   ├── PopoverPanel.swift         # Custom NSPanel + StatusBarController
+│   ├── PopoverPanel.swift         # Custom NSPanel + StatusBarController + tan-tint icon
 │   └── SundialView.swift          # SwiftUI popover content
 ├── Features/
-│   ├── EDRBoost.swift             # The headline feature — per-screen EDR Metal layer
+│   ├── EDRBoost.swift             # Per-screen EDR Metal layer + eased engage/disengage
 │   ├── KeyboardBacklight.swift    # NSEvent.systemDefined illumination keys
 │   └── BatteryCost.swift          # ioreg AppleSmartBattery sampling
 └── Utilities/
-    └── BrightnessPoller.swift     # dlopen DisplayServicesGetBrightness
+    ├── BrightnessPoller.swift     # dlopen DisplayServicesGetBrightness
+    ├── SunPosition.swift          # Schlyter's algorithm — pure math, offline
+    └── SolarContext.swift         # CLLocationManager + Open-Meteo weather
 Tests/
-└── BoostTriggerTests.swift        # 11 tests, runs in 9ms
+├── BoostTriggerTests.swift        # 11 tests — hysteresis state machine
+├── SunPositionTests.swift         # 7 tests — sun azimuth/elevation accuracy
+└── DailySunLogTests.swift         # 11 tests — Vitamin D math, time-weighted averages
+                                   # Total: 29 tests, suite runs in ~40ms
 ```
 
 Project file is regenerated from [`project.yml`](project.yml) via xcodegen — never edit `Sundial.xcodeproj` directly.
