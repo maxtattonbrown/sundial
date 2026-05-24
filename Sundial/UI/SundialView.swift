@@ -72,14 +72,22 @@ struct SundialView: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Keyboard backlight needs Accessibility")
                     .font(.caption)
-                Text("The screen brightness boost works fine without it.")
+                Text("Grant the permission in System Settings, then quit and reopen Sundial — macOS caches the trust status at launch, so the change won't take effect until you relaunch.")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
-                Button("Grant in System Settings") {
-                    manager.openAccessibilitySettings()
+                    .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 6) {
+                    Button("Grant in System Settings") {
+                        manager.openAccessibilitySettings()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    Button("Quit Sundial") {
+                        NSApplication.shared.terminate(nil)
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
-                .buttonStyle(.borderedProminent)
-                .controlSize(.small)
                 .padding(.top, 2)
             }
         }

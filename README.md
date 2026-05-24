@@ -110,7 +110,7 @@ The "Today in the sun" panel includes a Vitamin D percentage. This is **not medi
 
 - **Mini-LED panels only.** The EDR brightness boost works on MacBook Pro M1 Pro/Max and later, and Pro Display XDR. It will technically run on Air models / older MBPs but won't visibly boost brightness because the panel can't.
 - **Multi-display behaviour is naïve.** Sundial puts an EDR layer on every connected screen when engaged. Per-display tuning is out of scope for v0.1.
-- **The keyboard backlight injection may be locked down on macOS 26+** even with Accessibility granted. Falling back to IOKit `AppleKeyboardBacklight` is a v0.2 candidate.
+- **The keyboard backlight feature is currently unreliable on macOS 14+.** The `NSEvent.systemDefined` illumination-key route appears to be locked down for background `LSUIElement` apps regardless of Accessibility status. v0.2.1 attempts a timestamp fix; if your keyboard backlight doesn't drop when Sundial engages, that's the known issue. Switching to IOKit `AppleKeyboardBacklight` directly is the planned v0.3 fix.
 - **Battery cost is qualitative.** The 70Wh constant is a rough M1/M2/M3 14" approximation. The displayed delta is real (measured discharge wattage), the projection to "minutes lost" is an estimate.
 - **No app icon yet.** Menu bar uses the SF Symbol `sun.max.fill`. A real icon would be nice.
 

@@ -18,10 +18,14 @@ final class DailySunLog {
     }
 
     private let storageKey = "Sundial.DailySunLog.v1"
+    private let defaults: UserDefaults
     private(set) var today: Day
 
-    init() {
-        self.today = Self.load(key: storageKey) ?? Day.fresh(for: Date())
+    /// Production callers use `.standard`. Tests inject a transient suite to avoid polluting
+    /// the real app's plist — see DailySunLogTests for the pattern.
+    init(defaults: UserDefaults = .standard) {
+        self.defaults = defaults
+        self.today = Self.load(from: defaults, key: storageKey) ?? Day.fresh(for: Date())
     }
 
     // MARK: - Mutation
@@ -78,11 +82,11 @@ final class DailySunLog {
 
     private func persist() {
         guard let data = try? JSONEncoder().encode(today) else { return }
-        UserDefaults.standard.set(data, forKey: storageKey)
+        defaults.set(data, forKey: storageKey)
     }
 
-    private static func load(key: String) -> Day? {
-        guard let data = UserDefaults.standard.data(forKey: key),
+    private static func load(from defaults: UserDefaults, key: String) -> Day? {
+        guard let data = defaults.data(forKey: key),
               let day = try? JSONDecoder().decode(Day.self, from: data) else {
             return nil
         }

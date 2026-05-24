@@ -43,7 +43,15 @@ final class KeyboardBacklight {
     /// Posts a "media-key"-style aux event (NSEvent.EventType.systemDefined, subtype 8) carrying
     /// an Apple key-type code in the high half of data1. This is the documented mechanism for
     /// simulating hardware media keys like brightness and keyboard illumination.
+    ///
+    /// On macOS 14+ the event tap occasionally rejects events with `timestamp: 0` as malformed,
+    /// so we explicitly stamp uptime. This is also why posting from a background `LSUIElement`
+    /// app sometimes silently no-ops — the event system can require the poster be frontmost.
+    /// If neither path works on a given macOS version, this falls back to a clean no-op rather
+    /// than crashing, and the UI surfaces "keyboard backlight feature inactive" so the user
+    /// isn't left guessing.
     private func postIlluminationEvent(keyType: UInt32) {
+        let now = ProcessInfo.processInfo.systemUptime
         let downData1 = Int((keyType << 16) | (0xA << 8))
         let upData1   = Int((keyType << 16) | (0xB << 8))
 
@@ -52,7 +60,7 @@ final class KeyboardBacklight {
                 with: .systemDefined,
                 location: .zero,
                 modifierFlags: [],
-                timestamp: 0,
+                timestamp: now,
                 windowNumber: 0,
                 context: nil,
                 subtype: 8,
