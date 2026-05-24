@@ -1,6 +1,6 @@
 // ABOUTME: The headline feature — pushes the panel past its SDR brightness cap by requesting EDR
-// ABOUTME: headroom, with a right-edge "I'm boosting harder now" indicator that flashes on engage
-// ABOUTME: and on intensity step-ups, then fades out so it isn't there the whole time.
+// ABOUTME: headroom. Engage/disengage are animated with eased curves (800ms in, 1.2s out). Effective
+// ABOUTME: strength is set by SundialManager based on live solar irradiance — the boost follows the sun.
 
 import AppKit
 import Metal
@@ -9,17 +9,11 @@ import QuartzCore
 @MainActor
 final class EDRBoost {
     private var windows: [NSWindow] = []
-    private var contents: [BoostWindowContent] = []
+    private var metalViews: [EDRMetalView] = []
     private let device = MTLCreateSystemDefaultDevice()
 
-    /// Currently-rendered EDR multiplier. Drives the Metal layer clear colour. Set indirectly via
-    /// `setEffectiveStrength(_:)` so the indicator flash logic can react to step-ups.
+    /// Currently-rendered EDR multiplier. Set indirectly via `setEffectiveStrength(_:)`.
     private(set) var effectiveStrength: Float = 0
-
-    /// "Intensity must rise by at least this much (post-floor) to be worth flashing." Below this
-    /// the boost still smoothly animates to the new value; the indicator just doesn't fire so
-    /// minor fluctuations aren't distracting.
-    private let flashThreshold: Float = 0.3
 
     func engage() {
         guard windows.isEmpty else { return }
@@ -29,25 +23,24 @@ final class EDRBoost {
         }
 
         for screen in NSScreen.screens {
-            let (window, content) = makeWindow(for: screen, device: device)
+            let (window, view) = makeWindow(for: screen, device: device)
             window.orderFront(nil)
             windows.append(window)
-            contents.append(content)
+            metalViews.append(view)
         }
     }
 
     func disengage() {
         guard !windows.isEmpty else { return }
-        let contentsToClose = contents
+        let viewsToClose = metalViews
         let windowsToClose = windows
-        contents.removeAll()
+        metalViews.removeAll()
         windows.removeAll()
         effectiveStrength = 0
 
-        // Fade EDR strength down over 1.2s — sun-fading-behind-a-cloud feel. Indicator stays
-        // silent on disengage (the screen visibly dimming IS the signal).
-        for content in contentsToClose {
-            content.animate(to: 0.0, over: 1.2, curve: .easeIn)
+        // Fade EDR strength down over 1.2s — sun-fading-behind-a-cloud feel.
+        for view in viewsToClose {
+            view.animate(to: 0.0, over: 1.2, curve: .easeIn)
         }
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 1_300_000_000)
@@ -59,32 +52,19 @@ final class EDRBoost {
         }
     }
 
-    /// Set the *currently-rendered* boost intensity. If this is the initial engage (previous = 0)
-    /// or a meaningful step-up, the right-edge indicator flashes for ~3s. Smooth animation to the
-    /// new value either way.
-    func setEffectiveStrength(_ newValue: Float, animationDuration: TimeInterval = 0.5) {
-        guard !contents.isEmpty else { return }
+    /// Set the currently-rendered boost intensity. Smoothly animates to the new value over 500ms
+    /// (or 800ms on the initial engage — matches the original sun-from-cloud feel).
+    func setEffectiveStrength(_ newValue: Float) {
+        guard !metalViews.isEmpty else { return }
         let oldValue = effectiveStrength
         effectiveStrength = newValue
-
-        // First-time engage: longer fade-in (matches the original sun-from-cloud feel).
-        let duration: TimeInterval = (oldValue == 0) ? 0.8 : animationDuration
-        let curve: EaseCurve = (oldValue == 0) ? .easeOut : .easeOut
-
-        for content in contents {
-            content.animate(to: newValue, over: duration, curve: curve)
-        }
-
-        let isInitialEngage = (oldValue == 0 && newValue > 0)
-        let isMeaningfulStepUp = (newValue - oldValue) > flashThreshold
-        if isInitialEngage || isMeaningfulStepUp {
-            for content in contents {
-                content.flashIndicator()
-            }
+        let duration: TimeInterval = (oldValue == 0) ? 0.8 : 0.5
+        for view in metalViews {
+            view.animate(to: newValue, over: duration, curve: .easeOut)
         }
     }
 
-    private func makeWindow(for screen: NSScreen, device: MTLDevice) -> (NSWindow, BoostWindowContent) {
+    private func makeWindow(for screen: NSScreen, device: MTLDevice) -> (NSWindow, EDRMetalView) {
         let frame = screen.frame
         let window = NSWindow(
             contentRect: frame,
@@ -101,9 +81,9 @@ final class EDRBoost {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
         window.hasShadow = false
 
-        let content = BoostWindowContent(frame: frame, device: device)
-        window.contentView = content
-        return (window, content)
+        let metalView = EDRMetalView(frame: frame, device: device)
+        window.contentView = metalView
+        return (window, metalView)
     }
 }
 
@@ -125,90 +105,6 @@ enum EaseCurve {
                 ? 4 * clamped * clamped * clamped
                 : 1 - pow(-2 * clamped + 2, 3) / 2
         }
-    }
-}
-
-// MARK: - BoostWindowContent
-
-/// The window's contentView. Wraps the EDR Metal layer (fullscreen) and a right-edge gradient
-/// indicator layer that flashes on engage / step-up. Keeping these as sibling layers means we
-/// don't need a second Metal pipeline for the indicator — Core Animation handles it.
-@MainActor
-final class BoostWindowContent: NSView {
-    fileprivate let metalView: EDRMetalView
-    private let indicatorLayer = CAGradientLayer()
-
-    init(frame: NSRect, device: MTLDevice) {
-        self.metalView = EDRMetalView(frame: frame, device: device)
-        super.init(frame: frame)
-
-        wantsLayer = true
-        layer = CALayer()
-        layer?.backgroundColor = .clear
-
-        metalView.frame = bounds
-        metalView.autoresizingMask = [.width, .height]
-        addSubview(metalView)
-
-        // Right-edge stripe — 6pt wide, ~40% of screen height, vertically centred. Warm
-        // sunlight palette, gradient fades to transparent at the top/bottom so it reads as
-        // "a beam of light catching the edge" rather than a hard-edged bar.
-        indicatorLayer.colors = [
-            CGColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.0),
-            CGColor(red: 1.0, green: 0.72, blue: 0.28, alpha: 1.0),
-            CGColor(red: 1.0, green: 0.55, blue: 0.15, alpha: 0.0),
-        ]
-        indicatorLayer.locations = [0.0, 0.5, 1.0]
-        indicatorLayer.startPoint = CGPoint(x: 0.5, y: 0)
-        indicatorLayer.endPoint = CGPoint(x: 0.5, y: 1)
-        indicatorLayer.opacity = 0
-        indicatorLayer.cornerRadius = 3
-        indicatorLayer.shadowColor = CGColor(red: 1.0, green: 0.65, blue: 0.2, alpha: 1.0)
-        indicatorLayer.shadowOpacity = 0.7
-        indicatorLayer.shadowRadius = 12
-        indicatorLayer.shadowOffset = .zero
-
-        positionIndicator()
-        layer?.addSublayer(indicatorLayer)
-    }
-
-    required init?(coder: NSCoder) { fatalError("init(coder:) not used") }
-
-    override func layout() {
-        super.layout()
-        positionIndicator()
-    }
-
-    private func positionIndicator() {
-        let stripeHeight = bounds.height * 0.4
-        let stripeWidth: CGFloat = 6
-        indicatorLayer.frame = CGRect(
-            x: bounds.width - stripeWidth - 4,   // 4pt off the right edge for some breathing room
-            y: (bounds.height - stripeHeight) / 2,
-            width: stripeWidth,
-            height: stripeHeight
-        )
-    }
-
-    // MARK: - Public API used by EDRBoost
-
-    func animate(to target: Float, over duration: TimeInterval, curve: EaseCurve) {
-        metalView.animate(to: target, over: duration, curve: curve)
-    }
-
-    /// Fade in 400ms → hold 2s → fade out 800ms. Replaces any in-progress flash.
-    func flashIndicator() {
-        let anim = CAKeyframeAnimation(keyPath: "opacity")
-        anim.values = [0.0, 1.0, 1.0, 0.0]
-        anim.keyTimes = [0.0, 0.125, 0.875, 1.0]   // 0.4/3.2, then 2.4/3.2, then 1.0
-        anim.duration = 3.2
-        anim.timingFunctions = [
-            CAMediaTimingFunction(name: .easeOut),
-            CAMediaTimingFunction(name: .linear),
-            CAMediaTimingFunction(name: .easeIn),
-        ]
-        indicatorLayer.opacity = 0   // model layer ends at 0; presentation drives the animation
-        indicatorLayer.add(anim, forKey: "flash")
     }
 }
 
@@ -284,8 +180,6 @@ final class EDRMetalView: NSView {
         startAnimationTimer()
     }
 
-    // MARK: - Timer management
-
     private func startIdleTimer() {
         redrawTimer?.invalidate()
         redrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
@@ -318,8 +212,6 @@ final class EDRMetalView: NSView {
         currentStrength = startStrength + (targetStrength - startStrength) * Float(eased)
         render()
     }
-
-    // MARK: - Drawing
 
     private func render() {
         guard let drawable = metalLayer.nextDrawable(),

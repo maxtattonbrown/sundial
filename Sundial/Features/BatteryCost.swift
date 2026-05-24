@@ -24,6 +24,38 @@ final class BatteryCost {
         return 100
     }
 
+    /// Battery state from pmset — used to pick which UI to show (time remaining vs plugged in).
+    enum PowerState {
+        case discharging(timeRemaining: String?)   // "4h 18m" or nil if "(no estimate)"
+        case charging
+        case charged
+        case unknown
+    }
+
+    /// Read current power state from `pmset -g batt`. The text format is stable across recent macOS.
+    func powerState() -> PowerState {
+        let out = shellRead("pmset -g batt")
+        if out.contains("'AC Power'") {
+            if out.contains("charged") {
+                return .charged
+            }
+            return .charging
+        }
+        if out.contains("'Battery Power'") {
+            // Look for "H:MM remaining" — macOS sometimes returns "(no estimate)" early on.
+            if let match = out.range(of: #"(\d+):(\d+) remaining"#, options: .regularExpression) {
+                let captured = String(out[match])
+                let timePart = captured.replacingOccurrences(of: " remaining", with: "")
+                let parts = timePart.split(separator: ":")
+                if parts.count == 2, let h = Int(parts[0]), let m = Int(parts[1]) {
+                    return .discharging(timeRemaining: h == 0 ? "\(m)m" : "\(h)h \(m)m")
+                }
+            }
+            return .discharging(timeRemaining: nil)
+        }
+        return .unknown
+    }
+
     /// Capture the current discharge wattage as the pre-boost baseline.
     func startSampling() {
         baselineWatts = currentDischargeWatts()

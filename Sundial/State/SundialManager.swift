@@ -1,6 +1,7 @@
 // ABOUTME: Master state for Sundial — owns isOn, drives the BoostTrigger, runs side effects,
-// ABOUTME: aggregates daily stats via DailySunLog, computes the *dynamic* effective boost from
-// ABOUTME: live solar irradiance and re-applies it on every poll so the boost follows the sun.
+// ABOUTME: aggregates daily stats via DailySunLog, computes the effective boost from live solar
+// ABOUTME: irradiance. From v0.4 the boost ceiling is internal (no user-facing slider) — the
+// ABOUTME: system is fully self-tuning between a 1.5× floor and a 3.0× ceiling driven by the sun.
 
 import Foundation
 import Observation
@@ -16,7 +17,6 @@ final class SundialManager {
     // MARK: - Persisted
 
     private let isOnKey = "Sundial.isOn"
-    private let strengthKey = "Sundial.boostStrength"
 
     var isOn: Bool {
         didSet {
@@ -25,14 +25,9 @@ final class SundialManager {
         }
     }
 
-    /// User-set CEILING on boost intensity. The *actual* boost (`currentEffectiveBoost`) scales
-    /// up from 1.5× at low irradiance toward this value at peak sun. Range 1.5–4.0.
-    var boostStrength: Double {
-        didSet {
-            UserDefaults.standard.set(boostStrength, forKey: strengthKey)
-            if state == .engaged { applyEffectiveBoost() }
-        }
-    }
+    /// Internal cap on the dynamic boost. Not user-configurable in v0.4 — chosen so the boost is
+    /// noticeable at peak sun without washing out content at our 5% overlay alpha.
+    private let boostCeiling: Double = 3.0
 
     // MARK: - Published live state
 
@@ -40,8 +35,8 @@ final class SundialManager {
     var currentOSBrightness: Double = 0.0
     var batteryCostMinutesPerHour: Int? = nil
     var batteryPercent: Int = 100
-    /// The boost multiplier currently being rendered — distinct from `boostStrength` (the ceiling).
-    /// Updated continuously based on `SolarContext.currentIrradiance`.
+    var powerState: BatteryCost.PowerState = .unknown
+    /// The boost multiplier currently being rendered.
     var currentEffectiveBoost: Double = 0
 
     let solar = SolarContext()
@@ -60,9 +55,6 @@ final class SundialManager {
 
     private init() {
         self.isOn = UserDefaults.standard.bool(forKey: isOnKey)
-
-        let storedStrength = UserDefaults.standard.object(forKey: strengthKey) as? Double
-        self.boostStrength = storedStrength ?? 2.5
 
         poller = BrightnessPoller(interval: pollIntervalSeconds) { [weak self] brightness in
             self?.handleBrightness(brightness)
@@ -94,6 +86,7 @@ final class SundialManager {
     private func handleBrightness(_ brightness: Double) {
         currentOSBrightness = brightness
         batteryPercent = cost.batteryPercent()
+        powerState = cost.powerState()
 
         if state == .engaged {
             dailyLog.tick(
@@ -101,8 +94,6 @@ final class SundialManager {
                 uvIndex: solar.currentUVIndex,
                 irradiance: solar.currentIrradiance
             )
-            // Re-evaluate the effective boost every poll so the EDR layer tracks live irradiance.
-            // EDRBoost only flashes the indicator if the new value is a meaningful step UP.
             applyEffectiveBoost()
         }
 
@@ -139,10 +130,9 @@ final class SundialManager {
 
     // MARK: - Effective boost
 
-    /// Computes the boost intensity for the current moment and pushes it to the EDR layer.
     private func applyEffectiveBoost() {
         let target = Self.computeEffectiveBoost(
-            slider: boostStrength,
+            ceiling: boostCeiling,
             irradiance: solar.currentIrradiance,
             solarAvailable: solar.availability == .ready
         )
@@ -150,21 +140,40 @@ final class SundialManager {
         edr.setEffectiveStrength(Float(target))
     }
 
-    /// Pure function — translate (slider ceiling, current irradiance) into a boost multiplier.
+    /// Pure function — translate (boost ceiling, current irradiance, availability) into a multiplier.
     ///
     /// Behaviour:
-    /// - If solar data isn't ready (location denied / offline), honour the slider value
-    ///   directly so the user's preference still has effect.
-    /// - Otherwise, ramp linearly from 1.5× at ≤200 W/m² to the slider value at ≥1000 W/m².
-    ///   The floor of 1.5 ensures Sundial still does *something* when engaged in low-irradiance
-    ///   conditions (user pinned brightness to max but sun is weak).
-    static func computeEffectiveBoost(slider: Double, irradiance: Double, solarAvailable: Bool) -> Double {
-        guard solarAvailable else { return slider }
+    /// - If solar data isn't ready (location denied / offline), fall back to the ceiling so the
+    ///   boost still does something useful.
+    /// - Otherwise, ramp linearly from 1.5× at ≤200 W/m² to the ceiling at ≥1000 W/m². The floor
+    ///   ensures Sundial does *something* when engaged in low-irradiance conditions.
+    static func computeEffectiveBoost(ceiling: Double, irradiance: Double, solarAvailable: Bool) -> Double {
+        guard solarAvailable else { return ceiling }
         let floor: Double = 1.5
-        let ceiling = max(floor, slider)
+        let cap = max(floor, ceiling)
         let lowAnchor: Double = 200
         let highAnchor: Double = 1000
         let normalised = max(0, min(1, (irradiance - lowAnchor) / (highAnchor - lowAnchor)))
-        return floor + (ceiling - floor) * normalised
+        return floor + (cap - floor) * normalised
+    }
+
+    // MARK: - Derived display values
+
+    /// 0.0–1.0 representing how close brightness is to the engage threshold (0.95). Once engaged
+    /// it stays at 1.0. Used to drive the dormant-state progress bar in the popover.
+    var engageProgress: Double {
+        let threshold = 0.95
+        if state == .engaged { return 1.0 }
+        return min(1.0, max(0.0, currentOSBrightness / threshold))
+    }
+
+    /// 1, 2 or 3 lightning bolts indicating how hard Sundial is currently working.
+    /// Mapped from the effective boost (1.5–3.0 range).
+    var boostBoltCount: Int {
+        let boost = currentEffectiveBoost
+        if boost <= 0 { return 0 }
+        if boost <= 1.7 { return 1 }
+        if boost <= 2.4 { return 2 }
+        return 3
     }
 }

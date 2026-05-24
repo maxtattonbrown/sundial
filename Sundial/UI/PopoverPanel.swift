@@ -70,7 +70,6 @@ final class StatusBarController: NSObject {
         super.init()
 
         if let button = statusItem.button {
-            button.image = iconImage(for: manager)
             button.action = #selector(togglePanel)
             button.target = self
         }
@@ -96,13 +95,33 @@ final class StatusBarController: NSObject {
         NotificationCenter.default.removeObserver(self)
     }
 
-    private func iconImage(for manager: SundialManager) -> NSImage? {
-        // The sun puts on sunglasses when the dynamic boost is pushing hard (effective > 2.0×).
-        // That's the line where Sundial is doing more than its floor — the sun is genuinely strong.
+    /// When the boost is pushing hard (effective > 2.0×), swap the menu bar icon for a 🕶️ emoji
+    /// title. Otherwise use an SF Symbol sun, optionally warm-tinted by the day's accumulated
+    /// boost minutes.
+    private func updateMenuBarPresentation() {
+        guard let button = statusItem.button else { return }
+        button.toolTip = tooltip(for: manager)
+        manager.dailyLog.rolloverIfNeeded()
+
         let isWearingShades = manager.currentEffectiveBoost > 2.0
 
-        // Glyph reflects state: filled-with-warning when engaged + low battery, filled when
-        // boosting, outline when dormant or off.
+        if isWearingShades {
+            // Emoji-as-title — the sun "puts on sunglasses." More legible than a composited
+            // SF Symbol, and instantly recognisable.
+            button.image = nil
+            button.attributedTitle = NSAttributedString(
+                string: "🕶️",
+                attributes: [.font: NSFont.systemFont(ofSize: 14)]
+            )
+            return
+        }
+
+        button.attributedTitle = NSAttributedString()
+        button.image = sunImage(for: manager)
+    }
+
+    private func sunImage(for manager: SundialManager) -> NSImage? {
+        // Outline when dormant or off, filled when boosting, warning-filled when engaged + low battery.
         let baseName: String
         if !manager.isOn {
             baseName = "sun.max"
@@ -114,66 +133,20 @@ final class StatusBarController: NSObject {
             baseName = "sun.max"
         }
 
-        // Tan tint — derived from today's accumulated boost minutes. At 0 minutes the icon is
-        // template (system menu bar colour) UNLESS the sun is currently wearing sunglasses, in
-        // which case we go bright yellow to make the glasses-on-sun composition pop.
+        // Tan tint accumulates across the day's boost minutes, resets at midnight.
         let tan = manager.dailyLog.tanFraction
-        let tint: NSColor
         if tan < 0.05 {
-            if !isWearingShades {
-                let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")
-                image?.isTemplate = true
-                return image
-            }
-            tint = NSColor.systemYellow
-        } else {
-            let neutralGray = NSColor(white: 0.5, alpha: 1.0)
-            let tannedOrange = NSColor.systemOrange
-            tint = neutralGray.blended(withFraction: tan, of: tannedOrange) ?? .systemOrange
+            let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")
+            image?.isTemplate = true
+            return image
         }
 
-        if isWearingShades {
-            return compositeShadedSun(tint: tint)
-        }
-
+        let neutralGray = NSColor(white: 0.5, alpha: 1.0)
+        let tint = neutralGray.blended(withFraction: tan, of: NSColor.systemOrange) ?? .systemOrange
         let config = NSImage.SymbolConfiguration(paletteColors: [tint])
         let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")?
             .withSymbolConfiguration(config)
         image?.isTemplate = false
-        return image
-    }
-
-    /// Composite a sun glyph wearing sunglasses. There's no built-in SF Symbol for this combo,
-    /// so we draw `sun.max.fill` then layer `sunglasses.fill` on top of it.
-    private func compositeShadedSun(tint: NSColor) -> NSImage? {
-        let size = NSSize(width: 22, height: 22)
-        let image = NSImage(size: size)
-        image.lockFocus()
-
-        let sunConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [tint]))
-        if let sun = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(sunConfig) {
-            sun.draw(in: NSRect(x: 0, y: 0, width: size.width, height: size.height))
-        }
-
-        // Sunglasses overlay — smaller, centred on the sun's face. Black for contrast against
-        // the warm/yellow sun beneath.
-        let glassesSize: CGFloat = 11
-        let glassesConfig = NSImage.SymbolConfiguration(pointSize: glassesSize, weight: .bold)
-            .applying(NSImage.SymbolConfiguration(paletteColors: [.black]))
-        if let glasses = NSImage(systemSymbolName: "sunglasses.fill", accessibilityDescription: nil)?
-            .withSymbolConfiguration(glassesConfig) {
-            glasses.draw(in: NSRect(
-                x: (size.width - glassesSize) / 2,
-                y: (size.height - glassesSize) / 2 - 1,   // sit slightly below centre
-                width: glassesSize,
-                height: glassesSize
-            ))
-        }
-
-        image.unlockFocus()
-        image.isTemplate = false
         return image
     }
 
@@ -194,10 +167,7 @@ final class StatusBarController: NSObject {
     }
 
     private func refreshIcon() {
-        // Triggers midnight rollover for the daily log if needed, before we read tanFraction.
-        manager.dailyLog.rolloverIfNeeded()
-        statusItem.button?.image = iconImage(for: manager)
-        statusItem.button?.toolTip = tooltip(for: manager)
+        updateMenuBarPresentation()
     }
 
     @objc private func togglePanel() {
