@@ -43,9 +43,10 @@ final class EffectiveBoostTests: XCTestCase {
     }
 
     func test_atCeilingIrradianceReturnsSlider() {
-        // At highAnchor (1000 W/m²) and above, the boost saturates at the user's slider value.
+        // v0.5 recalibration: highAnchor moved from 1000 → 800 W/m² so UK reality (peak ~800)
+        // actually hits the ceiling. At 800+ W/m² the boost saturates at the ceiling.
         XCTAssertEqual(
-            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 1000, solarAvailable: true),
+            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 800, solarAvailable: true),
             2.5,
             accuracy: 0.001
         )
@@ -59,25 +60,25 @@ final class EffectiveBoostTests: XCTestCase {
     // MARK: - Linear ramp between anchors
 
     func test_midRangeIsHalfwayBetweenFloorAndSlider() {
-        // Irradiance 600 W/m² = (600 − 200) / 800 = 0.5 of the way from low to high.
+        // Irradiance 500 W/m² = (500 − 200) / 600 = 0.5 of the way from low to high.
         // Slider 2.5 → effective = 1.5 + 0.5 × (2.5 − 1.5) = 2.0
         XCTAssertEqual(
-            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 600, solarAvailable: true),
+            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 500, solarAvailable: true),
             2.0,
             accuracy: 0.001
         )
         // Slider 4.0 → effective = 1.5 + 0.5 × (4.0 − 1.5) = 2.75
         XCTAssertEqual(
-            SundialManager.computeEffectiveBoost(ceiling: 4.0, irradiance: 600, solarAvailable: true),
+            SundialManager.computeEffectiveBoost(ceiling: 4.0, irradiance: 500, solarAvailable: true),
             2.75,
             accuracy: 0.001
         )
     }
 
     func test_threeQuartersWayUp() {
-        // Irradiance 800 W/m² = 0.75 of the way → effective = 1.5 + 0.75 × (slider − 1.5)
+        // Irradiance 650 W/m² = (650 − 200) / 600 = 0.75 → effective = 1.5 + 0.75 × (ceiling − 1.5)
         XCTAssertEqual(
-            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 800, solarAvailable: true),
+            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 650, solarAvailable: true),
             2.25,
             accuracy: 0.001
         )

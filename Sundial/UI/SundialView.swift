@@ -1,6 +1,6 @@
-// ABOUTME: Popover content. v0.4 redesign — icons-first, minimal explanatory text, native macOS
-// ABOUTME: feel matching Control Center / battery menu. No slider, no hint paragraphs. State
-// ABOUTME: communicated through a progress bar (dormant) or boost multiplier + bolts (engaged).
+// ABOUTME: Popover content. v0.5 redesign — a single unified bar communicates the entire state:
+// ABOUTME: continuous brightness fill (left) → 4 boost chunks (right). One visual replaces the
+// ABOUTME: separate progress bar / boost multiplier / bolts the popover used to have.
 
 import SwiftUI
 
@@ -11,7 +11,7 @@ struct SundialView: View {
         VStack(alignment: .leading, spacing: 12) {
             header
             Divider()
-            statusBlock
+            UnifiedBar(manager: manager)
 
             Divider()
             batteryBlock
@@ -28,7 +28,7 @@ struct SundialView: View {
             footer
         }
         .padding(14)
-        .frame(width: 260)
+        .frame(width: 280)
         .background(.regularMaterial)
     }
 
@@ -49,66 +49,13 @@ struct SundialView: View {
     }
 
     @ViewBuilder
-    private var statusBlock: some View {
-        if manager.isOn {
-            switch manager.state {
-            case .dormant:
-                dormantStatus
-            case .engaged:
-                engagedStatus
-            }
-        } else {
-            HStack(spacing: 8) {
-                Circle().fill(.gray).frame(width: 7, height: 7)
-                Text("Off").font(.subheadline).foregroundStyle(.secondary)
-                Spacer()
-            }
-        }
-    }
-
-    private var dormantStatus: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Circle().fill(.yellow).frame(width: 7, height: 7)
-                Text("Waiting for sun").font(.subheadline)
-                Spacer()
-            }
-            // Progress bar showing how close brightness is to the engage threshold.
-            ProgressView(value: manager.engageProgress)
-                .progressViewStyle(.linear)
-                .tint(progressTint)
-        }
-    }
-
-    private var engagedStatus: some View {
-        HStack(spacing: 8) {
-            Circle().fill(.orange).frame(width: 7, height: 7)
-            Text("Boosting").font(.subheadline)
-            Spacer()
-            Text(String(format: "%.1f×", manager.currentEffectiveBoost))
-                .font(.subheadline.monospacedDigit().bold())
-                .foregroundStyle(.orange)
-        }
-    }
-
-    @ViewBuilder
     private var batteryBlock: some View {
         switch manager.powerState {
         case .discharging(let timeRemaining):
             HStack(spacing: 8) {
-                if manager.state == .engaged && manager.boostBoltCount > 0 {
-                    HStack(spacing: 1) {
-                        ForEach(0..<manager.boostBoltCount, id: \.self) { _ in
-                            Image(systemName: "bolt.fill")
-                                .font(.subheadline)
-                                .foregroundStyle(.yellow)
-                        }
-                    }
-                } else {
-                    Image(systemName: "battery.\(manager.batteryPercent / 25 * 25)")
-                        .foregroundStyle(batteryColor)
-                        .font(.subheadline)
-                }
+                Image(systemName: "battery.\(min(100, manager.batteryPercent / 25 * 25))")
+                    .foregroundStyle(batteryColor)
+                    .font(.subheadline)
                 if let timeRemaining {
                     Text(timeRemaining)
                         .font(.subheadline.monospacedDigit())
@@ -139,20 +86,17 @@ struct SundialView: View {
 
     private var todayBlock: some View {
         HStack(spacing: 14) {
-            // Boost minutes today
             HStack(spacing: 4) {
                 Image(systemName: "sun.max.fill").foregroundStyle(.orange)
                 Text(manager.dailyLog.formattedMinutes)
                     .monospacedDigit()
             }
-            // Vitamin D %
             HStack(spacing: 4) {
                 Image(systemName: "pills.fill").foregroundStyle(vitaminDColor)
                 Text("\(manager.dailyLog.vitaminDPercent)%")
                     .monospacedDigit()
             }
             Spacer()
-            // Sunset
             if let sunset = manager.solar.sunsetToday {
                 HStack(spacing: 4) {
                     Image(systemName: "sunset.fill").foregroundStyle(.orange.opacity(0.7))
@@ -188,13 +132,6 @@ struct SundialView: View {
 
     // MARK: - Derived
 
-    private var progressTint: Color {
-        // Pale at low brightness, warmer as we approach the engage threshold.
-        if manager.engageProgress > 0.85 { return .orange }
-        if manager.engageProgress > 0.6 { return .yellow }
-        return .blue.opacity(0.5)
-    }
-
     private var batteryColor: Color {
         manager.batteryPercent < 30 ? .red : .secondary
     }
@@ -210,5 +147,82 @@ struct SundialView: View {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm"
         return formatter.string(from: date)
+    }
+}
+
+// MARK: - UnifiedBar
+
+/// One bar that tells the entire story: continuous brightness fill on the left (filling toward
+/// the engage threshold), discrete boost-intensity chunks on the right (lighting up as the sun
+/// strengthens). Replaces what used to be a separate progress bar, boost label, and bolt count.
+struct UnifiedBar: View {
+    @Bindable var manager: SundialManager
+
+    /// Thresholds at which each chunk lights. Engaged-at-floor lights chunk 0; peak boost
+    /// lights all four. Mapped to the dynamic-boost range (1.5–3.0 ceiling).
+    private let chunkThresholds: [Double] = [1.5, 2.0, 2.5, 2.8]
+
+    var body: some View {
+        HStack(spacing: 8) {
+            brightnessBar
+                .frame(height: 8)
+                .frame(maxWidth: .infinity)
+
+            HStack(spacing: 3) {
+                ForEach(0..<chunkThresholds.count, id: \.self) { i in
+                    Capsule()
+                        .fill(chunkFill(at: i))
+                        .frame(width: 9, height: 8)
+                }
+            }
+
+            Text(readoutLabel)
+                .font(.caption.monospacedDigit().bold())
+                .foregroundStyle(readoutColor)
+                .frame(width: 38, alignment: .trailing)
+        }
+        .animation(.easeOut(duration: 0.3), value: manager.engageProgress)
+        .animation(.easeOut(duration: 0.3), value: manager.currentEffectiveBoost)
+    }
+
+    private var brightnessBar: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .leading) {
+                Capsule().fill(Color.gray.opacity(0.18))
+                Capsule()
+                    .fill(brightnessGradient)
+                    .frame(width: max(0, geo.size.width * manager.engageProgress))
+            }
+        }
+    }
+
+    private var brightnessGradient: LinearGradient {
+        // Cool dim → warm bright. At fully engaged, the gradient reaches its warmest point.
+        LinearGradient(
+            colors: [Color.blue.opacity(0.35), .yellow.opacity(0.8), .orange],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
+    }
+
+    private func chunkFill(at index: Int) -> Color {
+        guard manager.state == .engaged, manager.currentEffectiveBoost > 0 else {
+            return .gray.opacity(0.18)
+        }
+        return manager.currentEffectiveBoost >= chunkThresholds[index] ? .orange : .gray.opacity(0.18)
+    }
+
+    private var readoutLabel: String {
+        if !manager.isOn { return "Off" }
+        if manager.state == .engaged {
+            return String(format: "%.1f×", manager.currentEffectiveBoost)
+        }
+        return "—"
+    }
+
+    private var readoutColor: Color {
+        if !manager.isOn { return .secondary }
+        if manager.state == .engaged { return .orange }
+        return .secondary
     }
 }

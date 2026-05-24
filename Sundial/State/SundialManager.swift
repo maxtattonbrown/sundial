@@ -145,14 +145,16 @@ final class SundialManager {
     /// Behaviour:
     /// - If solar data isn't ready (location denied / offline), fall back to the ceiling so the
     ///   boost still does something useful.
-    /// - Otherwise, ramp linearly from 1.5× at ≤200 W/m² to the ceiling at ≥1000 W/m². The floor
-    ///   ensures Sundial does *something* when engaged in low-irradiance conditions.
+    /// - Otherwise, ramp linearly from 1.5× at ≤200 W/m² to the ceiling at ≥800 W/m². The 800
+    ///   highAnchor (not 1000) is calibrated to real-world peaks — UK summer noon tops out around
+    ///   700–900 W/m², tropical noon rarely sustains above 900 either. Anchoring at 800 means the
+    ///   ceiling is reachable in normal bright conditions globally.
     static func computeEffectiveBoost(ceiling: Double, irradiance: Double, solarAvailable: Bool) -> Double {
         guard solarAvailable else { return ceiling }
         let floor: Double = 1.5
         let cap = max(floor, ceiling)
         let lowAnchor: Double = 200
-        let highAnchor: Double = 1000
+        let highAnchor: Double = 800
         let normalised = max(0, min(1, (irradiance - lowAnchor) / (highAnchor - lowAnchor)))
         return floor + (cap - floor) * normalised
     }

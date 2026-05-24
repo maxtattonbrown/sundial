@@ -46,7 +46,7 @@ final class BoostTriggerTests: XCTestCase {
         var trigger = BoostTrigger()
         let transitions = run(&trigger, events: [
             (1.0, 0),   // count = 1
-            (0.5, 3),   // reset
+            (0.80, 3),   // reset
             (1.0, 6),   // count = 1 (NOT 2)
         ])
         XCTAssertEqual(transitions, [.noChange, .noChange, .noChange])
@@ -61,11 +61,11 @@ final class BoostTriggerTests: XCTestCase {
 
         // Brightness drops at t=6 and stays low.
         let transitions = run(&trigger, events: [
-            (0.5, 6),   // begin dwell
-            (0.5, 9),   // 3s in — no transition
-            (0.5, 12),  // 6s in — no transition
-            (0.5, 15),  // 9s in — no transition
-            (0.5, 16),  // 10s in — disengage
+            (0.80, 6),   // begin dwell
+            (0.80, 9),   // 3s in — no transition
+            (0.80, 12),  // 6s in — no transition
+            (0.80, 15),  // 9s in — no transition
+            (0.80, 16),  // 10s in — disengage
         ])
         XCTAssertEqual(transitions, [.noChange, .noChange, .noChange, .noChange, .disengaged])
         XCTAssertEqual(trigger.state, .dormant(consecutiveHigh: 0))
@@ -76,11 +76,11 @@ final class BoostTriggerTests: XCTestCase {
         _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])  // engaged
 
         let transitions = run(&trigger, events: [
-            (0.5, 6),   // begin dwell
+            (0.80, 6),   // begin dwell
             (1.0, 9),   // recovered — abandon countdown
-            (0.5, 12),  // start dwell again, only 0s in
-            (0.5, 15),  // 3s in
-            (0.5, 21),  // 9s in — still engaged
+            (0.80, 12),  // start dwell again, only 0s in
+            (0.80, 15),  // 3s in
+            (0.80, 21),  // 9s in — still engaged
         ])
         XCTAssertEqual(transitions, [.noChange, .noChange, .noChange, .noChange, .noChange])
         // Still engaged, with low countdown that started at t=12.
@@ -140,6 +140,70 @@ final class BoostTriggerTests: XCTestCase {
             "Real outdoor brightness caps below 1.0 — the trigger must still engage")
     }
 
+    // MARK: - Fast disengage (going indoors)
+
+    /// Walking inside drops brightness from ~0.95 to ~0.3 quickly. The standard 10s dwell felt
+    /// laggy — added a fast path triggered by brightness ≤ 0.60 that disengages in 1.5s.
+    func test_fastDisengageOnDeepBrightnessDrop() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])  // engaged
+
+        let transitions = run(&trigger, events: [
+            (0.30, 6),   // brightness collapses — start fast dwell
+            (0.30, 8),   // 2s in — past the 1.5s fast threshold
+        ])
+        XCTAssertEqual(transitions, [.noChange, .disengaged],
+            "Deep brightness drops should fast-disengage in ~1.5s rather than the 10s standard dwell")
+    }
+
+    /// A brightness drop that's below the fast threshold but the fast dwell hasn't elapsed yet
+    /// should not disengage. Verifies the timing window.
+    func test_fastDisengageRequiresDwell() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])
+
+        let transitions = run(&trigger, events: [
+            (0.30, 6),   // start fast dwell
+            (0.30, 7),   // 1s in — still under 1.5s threshold
+        ])
+        XCTAssertEqual(transitions, [.noChange, .noChange])
+        if case .engaged = trigger.state {
+            // Still engaged — correct
+        } else {
+            XCTFail("Expected to still be engaged after only 1s of fast dwell")
+        }
+    }
+
+    /// A slow drift down (cloud cover, late afternoon) should NOT fast-disengage — needs the
+    /// standard 10s dwell so brief flutter near the threshold doesn't kick the boost off.
+    func test_slowDriftUsesStandardDwell() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])
+
+        let transitions = run(&trigger, events: [
+            (0.80, 6),    // below disengage threshold (0.85) but above fast threshold (0.60)
+            (0.80, 9),    // 3s in — standard dwell isn't done yet
+            (0.80, 13),   // 7s in
+            (0.80, 17),   // 11s in — disengage
+        ])
+        XCTAssertEqual(transitions, [.noChange, .noChange, .noChange, .disengaged])
+    }
+
+    /// Brightness drops into the slow zone, then drops further into the fast zone mid-dwell.
+    /// The fast threshold should take over immediately — the dwell is then "1.5s since the
+    /// drop began," which has already passed.
+    func test_dropFromSlowToFastShortcutsTheDwell() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])
+
+        let transitions = run(&trigger, events: [
+            (0.80, 6),   // start slow dwell
+            (0.30, 9),   // 3s in, drop further — now in fast zone, should disengage (3s > 1.5s)
+        ])
+        XCTAssertEqual(transitions, [.noChange, .disengaged],
+            "Once brightness crosses into the fast zone, the dwell shortens — if elapsed already exceeds 1.5s, disengage")
+    }
+
     // MARK: - Reset
 
     func test_resetReturnsToDormantWithZeroCount() {
@@ -169,10 +233,10 @@ final class BoostTriggerTests: XCTestCase {
         _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])
 
         let transitions = run(&trigger, events: [
-            (0.5, 6),
-            (0.5, 15),   // 9s in
-            (0.5, 26),   // 20s in
-            (0.5, 36),   // 30s in — disengage
+            (0.80, 6),
+            (0.80, 15),   // 9s in
+            (0.80, 26),   // 20s in
+            (0.80, 36),   // 30s in — disengage
         ])
         XCTAssertEqual(transitions, [.noChange, .noChange, .noChange, .disengaged])
     }

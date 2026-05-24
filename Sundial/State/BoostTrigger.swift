@@ -31,8 +31,13 @@ struct BoostTrigger {
     /// and `engageThreshold` is the dead zone — it stops the boost flutter-oscillating when
     /// brightness sits near the top of the range.
     var disengageThreshold: Double = 0.85
+    /// Brightness reading low enough to indicate the user has unambiguously left the sun
+    /// (gone indoors). Short dwell — no chance of accidental re-engagement at this level.
+    var fastDisengageThreshold: Double = 0.60
     var engageRequiredReads: Int = 2
     var disengageDwellSeconds: TimeInterval = 10.0
+    /// Dwell time for the fast-disengage path. Tight because the brightness drop is decisive.
+    var fastDisengageDwellSeconds: TimeInterval = 1.5
 
     // MARK: - State
 
@@ -56,18 +61,30 @@ struct BoostTrigger {
                 state = .dormant(consecutiveHigh: 0)
             }
         case .engaged(let lowSince):
-            if brightness <= disengageThreshold {
+            // Two-tier disengage: a fast path for unambiguous "left the sun" events (brightness
+            // far below the threshold), and a slower path for ambiguous near-threshold dips
+            // (a passing cloud). The fast path can pre-empt the slow one — if brightness drops
+            // below the fast threshold mid-dwell, the effective dwell shortens immediately.
+            let effectiveDwell: TimeInterval?
+            if brightness <= fastDisengageThreshold {
+                effectiveDwell = fastDisengageDwellSeconds
+            } else if brightness <= disengageThreshold {
+                effectiveDwell = disengageDwellSeconds
+            } else {
+                // Brightness recovered above the disengage threshold — abandon the countdown.
+                state = .engaged(lowSince: nil)
+                effectiveDwell = nil
+            }
+
+            if let dwell = effectiveDwell {
                 if let start = lowSince {
-                    if now.timeIntervalSince(start) >= disengageDwellSeconds {
+                    if now.timeIntervalSince(start) >= dwell {
                         state = .dormant(consecutiveHigh: 0)
                         return .disengaged
                     }
                 } else {
                     state = .engaged(lowSince: now)
                 }
-            } else {
-                // Brightness recovered — abandon the disengage countdown.
-                state = .engaged(lowSince: nil)
             }
         }
         return .noChange
