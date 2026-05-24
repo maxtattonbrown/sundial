@@ -1,4 +1,4 @@
-// ABOUTME: Popover content — master toggle, current OS brightness reading, dormant/engaged state, battery cost.
+// ABOUTME: Popover content — master toggle, status, accessibility prompt, boost slider, battery cost.
 // ABOUTME: Pure SwiftUI; bound to SundialManager via @Bindable for two-way isOn binding.
 
 import SwiftUI
@@ -9,12 +9,22 @@ struct SundialView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             header
+
+            if manager.isOn && !manager.accessibilityGranted {
+                Divider()
+                accessibilityWarning
+            }
+
             Divider()
             statusBlock
+
             if manager.isOn {
+                Divider()
+                strengthSlider
                 Divider()
                 batteryBlock
             }
+
             Divider()
             footer
         }
@@ -47,6 +57,27 @@ struct SundialView: View {
         }
     }
 
+    private var accessibilityWarning: some View {
+        HStack(alignment: .top, spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+                .foregroundStyle(.yellow)
+                .font(.subheadline)
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Keyboard backlight needs Accessibility")
+                    .font(.caption)
+                Text("The screen brightness boost works fine without it.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                Button("Grant in System Settings") {
+                    manager.openAccessibilitySettings()
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .padding(.top, 2)
+            }
+        }
+    }
+
     private var statusBlock: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack(spacing: 8) {
@@ -66,6 +97,26 @@ struct SundialView: View {
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
             }
+        }
+    }
+
+    private var strengthSlider: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Text("Boost strength")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Text(String(format: "%.1f×", manager.boostStrength))
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+            Slider(
+                value: $manager.boostStrength,
+                in: 1.5...4.0,
+                step: 0.1
+            )
+            .controlSize(.small)
         }
     }
 

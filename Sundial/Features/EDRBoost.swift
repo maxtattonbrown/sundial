@@ -11,7 +11,14 @@ import QuartzCore
 @MainActor
 final class EDRBoost {
     private var windows: [NSWindow] = []
+    private var metalViews: [EDRMetalView] = []
     private let device = MTLCreateSystemDefaultDevice()
+
+    /// EDR brightness multiplier (post-premultiplication). Live-tunable while engaged — the next
+    /// render frame (1Hz) picks it up.
+    var boostStrength: Float = 2.5 {
+        didSet { metalViews.forEach { $0.boostStrength = boostStrength } }
+    }
 
     func engage() {
         guard windows.isEmpty else { return }
@@ -21,9 +28,11 @@ final class EDRBoost {
         }
 
         for screen in NSScreen.screens {
-            let window = makeWindow(for: screen, device: device)
+            let (window, view) = makeWindow(for: screen, device: device)
+            view.boostStrength = boostStrength
             window.orderFront(nil)
             windows.append(window)
+            metalViews.append(view)
         }
     }
 
@@ -33,9 +42,10 @@ final class EDRBoost {
             window.close()
         }
         windows.removeAll()
+        metalViews.removeAll()
     }
 
-    private func makeWindow(for screen: NSScreen, device: MTLDevice) -> NSWindow {
+    private func makeWindow(for screen: NSScreen, device: MTLDevice) -> (NSWindow, EDRMetalView) {
         let frame = screen.frame
         let window = NSWindow(
             contentRect: frame,
@@ -55,7 +65,7 @@ final class EDRBoost {
 
         let metalView = EDRMetalView(frame: frame, device: device)
         window.contentView = metalView
-        return window
+        return (window, metalView)
     }
 }
 
@@ -69,9 +79,10 @@ final class EDRMetalView: NSView {
     private var redrawTimer: Timer?
 
     /// Brightness multiplier requested from the panel. 2.0 = +1 stop above SDR, 3.0 ≈ +1.5 stops.
-    /// The visible luminance contribution is `edrValue * alpha`, so a high multiplier with low
-    /// alpha lets the panel ceiling rise without our overlay washing out the screen.
-    private let edrValue: Float = 2.5
+    /// The visible luminance contribution is `boostStrength * alpha`, so a high multiplier with
+    /// low alpha lets the panel ceiling rise without our overlay washing out the screen.
+    /// Live-tuned from outside; the next 1Hz render picks up the new value.
+    var boostStrength: Float = 2.5
     private let alpha: Float = 0.05
 
     init(frame: NSRect, device: MTLDevice) {
@@ -141,7 +152,7 @@ final class EDRMetalView: NSView {
         // ARE the final framebuffer pixel values, already premultiplied. Writing values >1.0 in
         // extendedLinearDisplayP3 is what asks the system for EDR headroom; the panel responds by
         // lifting its backlight ceiling, which brightens ALL on-screen content.
-        let premulRGB = Double(edrValue)
+        let premulRGB = Double(boostStrength)
         pass.colorAttachments[0].clearColor = MTLClearColor(
             red:   premulRGB,
             green: premulRGB,

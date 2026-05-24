@@ -1,7 +1,7 @@
 // ABOUTME: Drops the keyboard backlight to zero while Sundial is on, restores on toggle-off.
 // ABOUTME: Uses NSEvent.systemDefined illumination-down/up events (the same events the F5/F6
 // ABOUTME: keys generate). Requires Accessibility permission to inject; silently no-ops if denied
-// ABOUTME: rather than nagging Mr.Maximilian — he can grant later via System Settings.
+// ABOUTME: so the rest of Sundial keeps working. UI surfaces the "needs Accessibility" state.
 
 import AppKit
 
@@ -13,8 +13,14 @@ final class KeyboardBacklight {
     private let NX_KEYTYPE_ILLUMINATION_UP: UInt32 = 20
     private let NX_KEYTYPE_ILLUMINATION_DOWN: UInt32 = 21
 
+    /// Whether macOS has trusted this process to inject input events. Read on every check —
+    /// the user can flip it in System Settings while Sundial is running.
+    var isAccessibilityGranted: Bool {
+        AXIsProcessTrusted()
+    }
+
     func engage() {
-        guard hasAccessibility() else {
+        guard isAccessibilityGranted else {
             print("[Sundial] Accessibility not granted — keyboard backlight feature inactive")
             return
         }
@@ -27,16 +33,11 @@ final class KeyboardBacklight {
     }
 
     func disengage() {
-        guard hasAccessibility(), pressedDown > 0 else { return }
+        guard isAccessibilityGranted, pressedDown > 0 else { return }
         for _ in 0..<pressedDown {
             postIlluminationEvent(keyType: NX_KEYTYPE_ILLUMINATION_UP)
         }
         pressedDown = 0
-    }
-
-    private func hasAccessibility() -> Bool {
-        // No prompt — we check passively. macOS auto-prompts on the first injection attempt anyway.
-        AXIsProcessTrusted()
     }
 
     /// Posts a "media-key"-style aux event (NSEvent.EventType.systemDefined, subtype 8) carrying

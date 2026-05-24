@@ -6,6 +6,20 @@ options:
   xcodeVersion: "16.0"
   minimumXcodeGenVersion: "2.38.0"
   createIntermediateGroups: true
+
+schemes:
+  Sundial:
+    build:
+      targets:
+        Sundial: all
+        SundialTests: [test]
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - SundialTests
+
 targets:
   Sundial:
     type: application
@@ -29,3 +43,17 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         CODE_SIGN_STYLE: Automatic
         GENERATE_INFOPLIST_FILE: YES
+
+  SundialTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - Tests
+    dependencies:
+      - target: Sundial
+    settings:
+      base:
+        SWIFT_VERSION: "5.9"
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_IDENTITY: "-"
+        CODE_SIGN_STYLE: Automatic

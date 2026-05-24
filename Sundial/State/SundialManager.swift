@@ -1,6 +1,6 @@
-// ABOUTME: Master state for Sundial — owns isOn, the dormant/engaged trigger, and feature orchestration.
-// ABOUTME: Brightness samples flow in from BrightnessPoller; the state machine engages EDR boost only
-// ABOUTME: when the OS brightness slider has saturated, and disengages with hysteresis to avoid flutter.
+// ABOUTME: Master state for Sundial — owns isOn, drives the BoostTrigger, runs side effects.
+// ABOUTME: Trigger logic lives in BoostTrigger (testable). This class owns side effects (EDR, keyboard,
+// ABOUTME: battery cost), UI-bound published state, and the BrightnessPoller subscription.
 
 import Foundation
 import Observation
@@ -13,42 +13,61 @@ final class SundialManager {
 
     enum BoostState { case dormant, engaged }
 
-    private let defaultsKey = "Sundial.isOn"
+    // MARK: - Persisted
+
+    private let isOnKey = "Sundial.isOn"
+    private let strengthKey = "Sundial.boostStrength"
 
     var isOn: Bool {
         didSet {
-            UserDefaults.standard.set(isOn, forKey: defaultsKey)
+            UserDefaults.standard.set(isOn, forKey: isOnKey)
             if isOn { onEnable() } else { onDisable() }
         }
     }
+
+    /// Multiplier written into the EDR layer's clear colour. 1.5 = subtle, 2.5 = default, 4.0 = aggressive.
+    /// Range is intentionally narrow — higher than ~4 starts to wash content out at our 5% overlay alpha.
+    var boostStrength: Double {
+        didSet {
+            UserDefaults.standard.set(boostStrength, forKey: strengthKey)
+            edr.boostStrength = Float(boostStrength)
+        }
+    }
+
+    // MARK: - Published live state
+
     var state: BoostState = .dormant
     var currentOSBrightness: Double = 0.0
     var batteryCostMinutesPerHour: Int? = nil
     var batteryPercent: Int = 100
+    var accessibilityGranted: Bool = false
+
+    // MARK: - Collaborators
 
     private let edr = EDRBoost()
     private let keyboard = KeyboardBacklight()
     private let cost = BatteryCost()
     private var poller: BrightnessPoller?
+    private var trigger = BoostTrigger()
 
-    private var aboveThresholdCount = 0
-    private var belowThresholdStart: Date?
-
-    // Hysteresis thresholds. Asymmetric so brightness flutter at the top of the range
-    // doesn't oscillate the boost — engage requires sustained saturation, disengage requires
-    // sustained drop. Same shape as a thermostat.
-    private let engageThreshold: Double = 0.99
-    private let disengageThreshold: Double = 0.95
-    private let engageRequiredReads = 2
-    private let disengageDwellSeconds: TimeInterval = 10.0
+    // MARK: - Init
 
     private init() {
-        self.isOn = UserDefaults.standard.bool(forKey: defaultsKey)
+        // UserDefaults.standard.bool(forKey:) returns false for missing keys — fine default.
+        self.isOn = UserDefaults.standard.bool(forKey: isOnKey)
+
+        // For numeric values we need a manual default to preserve "missing" semantics.
+        let storedStrength = UserDefaults.standard.object(forKey: strengthKey) as? Double
+        self.boostStrength = storedStrength ?? 2.5
+
+        edr.boostStrength = Float(boostStrength)
 
         poller = BrightnessPoller(interval: 3.0) { [weak self] brightness in
             self?.handleBrightness(brightness)
         }
         poller?.start()
+
+        accessibilityGranted = keyboard.isAccessibilityGranted
 
         if isOn { onEnable() }
     }
@@ -56,6 +75,7 @@ final class SundialManager {
     // MARK: - Toggle lifecycle
 
     private func onEnable() {
+        accessibilityGranted = keyboard.isAccessibilityGranted
         keyboard.engage()
     }
 
@@ -65,8 +85,7 @@ final class SundialManager {
         state = .dormant
         batteryCostMinutesPerHour = nil
         cost.stopSampling()
-        aboveThresholdCount = 0
-        belowThresholdStart = nil
+        trigger.reset()
     }
 
     // MARK: - Reactive trigger
@@ -74,29 +93,14 @@ final class SundialManager {
     private func handleBrightness(_ brightness: Double) {
         currentOSBrightness = brightness
         batteryPercent = cost.batteryPercent()
+        accessibilityGranted = keyboard.isAccessibilityGranted
 
         guard isOn else { return }
 
-        switch state {
-        case .dormant:
-            if brightness >= engageThreshold {
-                aboveThresholdCount += 1
-                if aboveThresholdCount >= engageRequiredReads {
-                    engage()
-                }
-            } else {
-                aboveThresholdCount = 0
-            }
-        case .engaged:
-            if brightness <= disengageThreshold {
-                if belowThresholdStart == nil {
-                    belowThresholdStart = Date()
-                } else if Date().timeIntervalSince(belowThresholdStart!) >= disengageDwellSeconds {
-                    disengage()
-                }
-            } else {
-                belowThresholdStart = nil
-            }
+        switch trigger.step(brightness: brightness, now: Date()) {
+        case .engaged: engage()
+        case .disengaged: disengage()
+        case .noChange: break
         }
     }
 
@@ -104,8 +108,6 @@ final class SundialManager {
         cost.startSampling()
         edr.engage()
         state = .engaged
-        aboveThresholdCount = 0
-        belowThresholdStart = nil
         Task { @MainActor [weak self] in
             // Give the panel ~8s to settle into the higher draw before sampling.
             try? await Task.sleep(nanoseconds: 8_000_000_000)
@@ -119,9 +121,16 @@ final class SundialManager {
     private func disengage() {
         edr.disengage()
         state = .dormant
-        belowThresholdStart = nil
-        aboveThresholdCount = 0
         batteryCostMinutesPerHour = nil
         cost.stopSampling()
+    }
+
+    // MARK: - Manual user actions
+
+    /// Opens System Settings → Privacy & Security → Accessibility so the user can grant permission.
+    func openAccessibilitySettings() {
+        let urlString = "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+        guard let url = URL(string: urlString) else { return }
+        NSWorkspace.shared.open(url)
     }
 }
