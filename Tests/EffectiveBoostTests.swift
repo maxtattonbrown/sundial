@@ -9,15 +9,23 @@ final class EffectiveBoostTests: XCTestCase {
 
     // MARK: - Solar unavailable
 
-    func test_returnsSliderValueWhenSolarUnavailable() {
-        // Location denied or offline — fall back to the user's slider preference directly.
+    func test_returnsFloorWhenSolarUnavailable() {
+        // v0.5.1 fix: when solar data isn't ready (location denied / offline), return the floor —
+        // we don't know real conditions, so lighting all chunks at peak would be a lie the user
+        // can't audit. Previously this returned the ceiling, making UnifiedBar show 4 chunks at
+        // night indoors with location denied.
         XCTAssertEqual(
             SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 800, solarAvailable: false),
-            2.5
+            1.5
         )
         XCTAssertEqual(
             SundialManager.computeEffectiveBoost(ceiling: 4.0, irradiance: 0, solarAvailable: false),
-            4.0
+            1.5
+        )
+        // Irradiance argument is ignored when solar is unavailable — we shouldn't trust it either.
+        XCTAssertEqual(
+            SundialManager.computeEffectiveBoost(ceiling: 2.5, irradiance: 10_000, solarAvailable: false),
+            1.5
         )
     }
 

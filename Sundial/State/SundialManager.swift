@@ -1,7 +1,6 @@
 // ABOUTME: Master state for Sundial — owns isOn, drives the BoostTrigger, runs side effects,
 // ABOUTME: aggregates daily stats via DailySunLog, computes the effective boost from live solar
-// ABOUTME: irradiance. From v0.4 the boost ceiling is internal (no user-facing slider) — the
-// ABOUTME: system is fully self-tuning between a 1.5× floor and a 3.0× ceiling driven by the sun.
+// ABOUTME: irradiance. v0.5.1 hardens against several state-coherence bugs found in code review.
 
 import Foundation
 import Observation
@@ -25,7 +24,7 @@ final class SundialManager {
         }
     }
 
-    /// Internal cap on the dynamic boost. Not user-configurable in v0.4 — chosen so the boost is
+    /// Internal cap on the dynamic boost. Not user-configurable — chosen so the boost is
     /// noticeable at peak sun without washing out content at our 5% overlay alpha.
     private let boostCeiling: Double = 3.0
 
@@ -48,6 +47,12 @@ final class SundialManager {
     private let cost = BatteryCost()
     private var poller: BrightnessPoller?
     private var trigger = BoostTrigger()
+
+    /// Increments on every successful `engage()`. The deferred 8-second battery-cost sampling
+    /// Task captures this value at scheduling and only writes back if the cycle is still current —
+    /// engage → disengage → re-engage within 8s would otherwise let an old Task contaminate the
+    /// new cycle's measurement.
+    private var engageCycle: UInt64 = 0
 
     private let pollIntervalSeconds: Double = 3.0
 
@@ -76,6 +81,9 @@ final class SundialManager {
         edr.disengage()
         state = .dormant
         currentEffectiveBoost = 0
+        // Freeze brightness reading so the bar doesn't continue pulsing with ambient light while
+        // the readout says "Off".
+        currentOSBrightness = 0
         batteryCostMinutesPerHour = nil
         cost.stopSampling()
         trigger.reset()
@@ -84,9 +92,30 @@ final class SundialManager {
     // MARK: - Reactive trigger + daily tick
 
     private func handleBrightness(_ brightness: Double) {
-        currentOSBrightness = brightness
+        // Battery readings update regardless of isOn — the battery section is visible either way.
         batteryPercent = cost.batteryPercent()
         powerState = cost.powerState()
+
+        guard isOn else {
+            // When toggled off, don't let live brightness keep filling the engageProgress bar.
+            currentOSBrightness = 0
+            return
+        }
+
+        currentOSBrightness = brightness
+
+        // Run the trigger FIRST. The state machine decides whether we're engaging, staying put,
+        // or disengaging. Then we react: log/animate only if we're still engaged AFTER the
+        // transition. This ordering avoids two artifacts:
+        //   1. dailyLog over-counting (the disengage tick would otherwise credit ~3s of sun
+        //      exposure for a moment the user has already gone indoors).
+        //   2. EDR animation flicker on the disengage tick (applyEffectiveBoost would have
+        //      pushed a fresh non-zero target moments before disengage zeroed it).
+        switch trigger.step(brightness: brightness, now: Date()) {
+        case .engaged: engage()
+        case .disengaged: disengage()
+        case .noChange: break
+        }
 
         if state == .engaged {
             dailyLog.tick(
@@ -96,25 +125,28 @@ final class SundialManager {
             )
             applyEffectiveBoost()
         }
-
-        guard isOn else { return }
-
-        switch trigger.step(brightness: brightness, now: Date()) {
-        case .engaged: engage()
-        case .disengaged: disengage()
-        case .noChange: break
-        }
     }
 
     private func engage() {
+        // Guard: if EDRBoost couldn't actually start (no Metal device, e.g. some VM configs),
+        // don't claim engagement in the wrapper — the popover would lie about "Boosting 2.5×"
+        // while no overlay window exists. Resetting the trigger backs off the engage attempt
+        // for the standard 2-read window.
+        guard edr.engage() else {
+            print("[Sundial] engage(): EDRBoost failed to start — staying dormant")
+            trigger.reset()
+            return
+        }
+        engageCycle &+= 1
+        let myCycle = engageCycle
         cost.startSampling()
-        edr.engage()
         state = .engaged
         applyEffectiveBoost()
         Task { @MainActor [weak self] in
             try? await Task.sleep(nanoseconds: 8_000_000_000)
             guard let self else { return }
-            if self.state == .engaged {
+            // Only write if we're still in the same engage cycle this Task was scheduled from.
+            if self.state == .engaged && self.engageCycle == myCycle {
                 self.batteryCostMinutesPerHour = self.cost.estimateMinutesLostPerHour()
             }
         }
@@ -143,15 +175,15 @@ final class SundialManager {
     /// Pure function — translate (boost ceiling, current irradiance, availability) into a multiplier.
     ///
     /// Behaviour:
-    /// - If solar data isn't ready (location denied / offline), fall back to the ceiling so the
-    ///   boost still does something useful.
-    /// - Otherwise, ramp linearly from 1.5× at ≤200 W/m² to the ceiling at ≥800 W/m². The 800
-    ///   highAnchor (not 1000) is calibrated to real-world peaks — UK summer noon tops out around
-    ///   700–900 W/m², tropical noon rarely sustains above 900 either. Anchoring at 800 means the
-    ///   ceiling is reachable in normal bright conditions globally.
+    /// - If solar data isn't ready (location denied / offline / first 15s of launch), return the
+    ///   floor. We don't know the real conditions, so lighting all chunks at peak would be a lie
+    ///   the user can't audit.
+    /// - Otherwise, ramp linearly from 1.5× at ≤200 W/m² to the ceiling at ≥800 W/m². 800 (not
+    ///   1000) is calibrated to real-world peaks — UK summer noon tops at 700-900 W/m², tropical
+    ///   noon rarely sustains above 900 either.
     static func computeEffectiveBoost(ceiling: Double, irradiance: Double, solarAvailable: Bool) -> Double {
-        guard solarAvailable else { return ceiling }
         let floor: Double = 1.5
+        guard solarAvailable else { return floor }
         let cap = max(floor, ceiling)
         let lowAnchor: Double = 200
         let highAnchor: Double = 800
@@ -162,20 +194,10 @@ final class SundialManager {
     // MARK: - Derived display values
 
     /// 0.0–1.0 representing how close brightness is to the engage threshold (0.95). Once engaged
-    /// it stays at 1.0. Used to drive the dormant-state progress bar in the popover.
+    /// it stays at 1.0. Used to drive the brightness gradient in the popover.
     var engageProgress: Double {
         let threshold = 0.95
         if state == .engaged { return 1.0 }
         return min(1.0, max(0.0, currentOSBrightness / threshold))
-    }
-
-    /// 1, 2 or 3 lightning bolts indicating how hard Sundial is currently working.
-    /// Mapped from the effective boost (1.5–3.0 range).
-    var boostBoltCount: Int {
-        let boost = currentEffectiveBoost
-        if boost <= 0 { return 0 }
-        if boost <= 1.7 { return 1 }
-        if boost <= 2.4 { return 2 }
-        return 3
     }
 }

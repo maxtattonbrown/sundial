@@ -204,6 +204,68 @@ final class BoostTriggerTests: XCTestCase {
             "Once brightness crosses into the fast zone, the dwell shortens — if elapsed already exceeds 1.5s, disengage")
     }
 
+    // MARK: - Dead-zone preservation (v0.5.1 fix)
+
+    /// v0.5 bug: a single brightness reading in the dead zone (0.86–0.94, above disengage but
+    /// below engage) cleared `lowSince` entirely, restarting the slow dwell from scratch. Fix
+    /// preserves the in-progress countdown across dead-zone flickers.
+    func test_deadZoneReadingPreservesSlowDwell() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])  // engaged
+
+        let transitions = run(&trigger, events: [
+            (0.80, 6),    // begin slow dwell, lowSince=6
+            (0.92, 9),    // dead zone — must NOT clear lowSince
+            (0.80, 12),   // back to slow zone — lowSince=6 should still be set
+            (0.80, 16),   // 10s from original lowSince — disengage
+        ])
+        XCTAssertEqual(transitions, [.noChange, .noChange, .noChange, .disengaged],
+            "A momentary dead-zone reading mid-dwell must not restart the 10s countdown")
+    }
+
+    /// Full recovery above the engage threshold (not just the disengage threshold) is what
+    /// abandons the countdown. Verifies the upper bound of the "preserve" rule.
+    func test_recoveryAboveEngageThresholdClearsCountdown() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])  // engaged
+
+        let transitions = run(&trigger, events: [
+            (0.80, 6),    // start dwell
+            (0.96, 9),    // recovery above engage threshold — clear countdown
+            (0.80, 12),   // restart dwell from 12 (lowSince was cleared)
+            (0.80, 17),   // only 5s in, must NOT disengage yet
+        ])
+        XCTAssertEqual(transitions, [.noChange, .noChange, .noChange, .noChange])
+    }
+
+    /// Closes the test gap left after v0.5 bumped 0.5 → 0.80 — the 0.61–0.79 band of the slow
+    /// zone is otherwise untested.
+    func test_slowDwellAt70Percent() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])
+
+        let transitions = run(&trigger, events: [
+            (0.70, 6),
+            (0.70, 9),
+            (0.70, 17),   // 11s — disengage at the slow dwell
+        ])
+        XCTAssertEqual(transitions, [.noChange, .noChange, .disengaged])
+    }
+
+    /// 0.61 sits just above the fast threshold (0.60). Verifies that the slow path applies
+    /// (10s dwell), not the fast path (1.5s).
+    func test_justAboveFastThresholdUsesSlowDwell() {
+        var trigger = BoostTrigger()
+        _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])
+
+        let transitions = run(&trigger, events: [
+            (0.61, 6),
+            (0.61, 8),    // 2s in — well past fast dwell, but slow zone applies
+        ])
+        XCTAssertEqual(transitions, [.noChange, .noChange],
+            "Brightness just above the fast threshold must use the 10s slow dwell, not 1.5s fast")
+    }
+
     // MARK: - Reset
 
     func test_resetReturnsToDormantWithZeroCount() {

@@ -15,11 +15,15 @@ final class EDRBoost {
     /// Currently-rendered EDR multiplier. Set indirectly via `setEffectiveStrength(_:)`.
     private(set) var effectiveStrength: Float = 0
 
-    func engage() {
-        guard windows.isEmpty else { return }
+    /// Returns `true` if EDR overlay windows are now showing (or were already), `false` if no
+    /// Metal device is available. SundialManager checks this so it doesn't set wrapper state to
+    /// `.engaged` while the underlying GPU path is dead.
+    @discardableResult
+    func engage() -> Bool {
+        if !windows.isEmpty { return true }
         guard let device else {
             print("[Sundial] No Metal device available — cannot engage EDR boost")
-            return
+            return false
         }
 
         for screen in NSScreen.screens {
@@ -28,6 +32,7 @@ final class EDRBoost {
             windows.append(window)
             metalViews.append(view)
         }
+        return !metalViews.isEmpty
     }
 
     func disengage() {
@@ -182,20 +187,37 @@ final class EDRMetalView: NSView {
 
     private func startIdleTimer() {
         redrawTimer?.invalidate()
-        redrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { [weak self] _ in
+        // .common mode keeps the timer firing while the menu-bar popover is open (which switches
+        // the run loop to .eventTracking). Without this, the EDR redraw freezes during popover use.
+        let timer = Timer(timeInterval: 1.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.render() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        redrawTimer = timer
     }
 
     private func startAnimationTimer() {
         redrawTimer?.invalidate()
-        redrawTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1.0 / 60.0, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.animationFrame() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        redrawTimer = timer
     }
 
     private func animationFrame() {
         guard let start = animationStart else {
+            startIdleTimer()
+            return
+        }
+        // Defend against pathological inputs (duration = 0, NaN, or strength values that arrived
+        // as NaN from a corrupted irradiance reading). NaN in MTLClearColor is undefined Metal
+        // behaviour — snap to target and bail.
+        guard animationDuration > 0,
+              !targetStrength.isNaN, !startStrength.isNaN else {
+            currentStrength = targetStrength.isNaN ? 0 : targetStrength
+            animationStart = nil
+            render()
             startIdleTimer()
             return
         }

@@ -80,10 +80,10 @@ final class StatusBarController: NSObject {
             name: NSView.frameDidChangeNotification, object: hostingView
         )
 
-        // Refresh icon on a slow timer — the @Observable manager updates state internally
-        // but we don't have a SwiftUI binding here. A 2s timer is plenty since icon changes
-        // are coarse (dormant ↔ engaged ↔ low battery).
-        Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+        // Refresh icon on a fast timer — the @Observable manager updates state internally
+        // but we don't have a SwiftUI binding here. 0.5s keeps the menu bar within half a
+        // second of actual state, important now that fast-disengage is 1.5s.
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
             Task { @MainActor in self?.refreshIcon() }
         }
     }

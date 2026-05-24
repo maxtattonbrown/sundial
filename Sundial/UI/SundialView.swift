@@ -53,7 +53,7 @@ struct SundialView: View {
         switch manager.powerState {
         case .discharging(let timeRemaining):
             HStack(spacing: 8) {
-                Image(systemName: "battery.\(min(100, manager.batteryPercent / 25 * 25))")
+                Image(systemName: "battery.\(max(0, min(100, manager.batteryPercent / 25 * 25)))")
                     .foregroundStyle(batteryColor)
                     .font(.subheadline)
                 if let timeRemaining {
@@ -160,7 +160,7 @@ struct UnifiedBar: View {
 
     /// Thresholds at which each chunk lights. Engaged-at-floor lights chunk 0; peak boost
     /// lights all four. Mapped to the dynamic-boost range (1.5–3.0 ceiling).
-    private let chunkThresholds: [Double] = [1.5, 2.0, 2.5, 2.8]
+    private let chunkThresholds: [Double] = [1.5, 2.0, 2.5, 3.0]
 
     var body: some View {
         HStack(spacing: 8) {

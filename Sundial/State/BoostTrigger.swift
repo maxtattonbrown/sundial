@@ -65,26 +65,30 @@ struct BoostTrigger {
             // far below the threshold), and a slower path for ambiguous near-threshold dips
             // (a passing cloud). The fast path can pre-empt the slow one — if brightness drops
             // below the fast threshold mid-dwell, the effective dwell shortens immediately.
-            let effectiveDwell: TimeInterval?
+            //
+            // The dead zone between `disengageThreshold` and `engageThreshold` is "no man's land":
+            // neither progress the countdown nor clear it. A brief flicker into 0.86-0.94 won't
+            // restart the 10s slow dwell from scratch. Only a full recovery (>= engageThreshold)
+            // clears `lowSince`.
+            let effectiveDwell: TimeInterval
             if brightness <= fastDisengageThreshold {
                 effectiveDwell = fastDisengageDwellSeconds
             } else if brightness <= disengageThreshold {
                 effectiveDwell = disengageDwellSeconds
-            } else {
-                // Brightness recovered above the disengage threshold — abandon the countdown.
+            } else if brightness >= engageThreshold {
                 state = .engaged(lowSince: nil)
-                effectiveDwell = nil
+                return .noChange
+            } else {
+                return .noChange   // dead zone — preserve countdown without progressing
             }
 
-            if let dwell = effectiveDwell {
-                if let start = lowSince {
-                    if now.timeIntervalSince(start) >= dwell {
-                        state = .dormant(consecutiveHigh: 0)
-                        return .disengaged
-                    }
-                } else {
-                    state = .engaged(lowSince: now)
+            if let start = lowSince {
+                if now.timeIntervalSince(start) >= effectiveDwell {
+                    state = .dormant(consecutiveHigh: 0)
+                    return .disengaged
                 }
+            } else {
+                state = .engaged(lowSince: now)
             }
         }
         return .noChange
