@@ -97,6 +97,10 @@ final class StatusBarController: NSObject {
     }
 
     private func iconImage(for manager: SundialManager) -> NSImage? {
+        // The sun puts on sunglasses when the dynamic boost is pushing hard (effective > 2.0×).
+        // That's the line where Sundial is doing more than its floor — the sun is genuinely strong.
+        let isWearingShades = manager.currentEffectiveBoost > 2.0
+
         // Glyph reflects state: filled-with-warning when engaged + low battery, filled when
         // boosting, outline when dormant or off.
         let baseName: String
@@ -111,22 +115,65 @@ final class StatusBarController: NSObject {
         }
 
         // Tan tint — derived from today's accumulated boost minutes. At 0 minutes the icon is
-        // template (system menu bar colour). As the day's sun adds up, the icon warms toward
-        // orange, saturating at 2h. Resets at midnight (DailySunLog handles that).
+        // template (system menu bar colour) UNLESS the sun is currently wearing sunglasses, in
+        // which case we go bright yellow to make the glasses-on-sun composition pop.
         let tan = manager.dailyLog.tanFraction
+        let tint: NSColor
         if tan < 0.05 {
-            let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")
-            image?.isTemplate = true
-            return image
+            if !isWearingShades {
+                let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")
+                image?.isTemplate = true
+                return image
+            }
+            tint = NSColor.systemYellow
+        } else {
+            let neutralGray = NSColor(white: 0.5, alpha: 1.0)
+            let tannedOrange = NSColor.systemOrange
+            tint = neutralGray.blended(withFraction: tan, of: tannedOrange) ?? .systemOrange
         }
 
-        let neutralGray = NSColor(white: 0.5, alpha: 1.0)
-        let tannedOrange = NSColor.systemOrange
-        let tint = neutralGray.blended(withFraction: tan, of: tannedOrange) ?? .systemOrange
+        if isWearingShades {
+            return compositeShadedSun(tint: tint)
+        }
+
         let config = NSImage.SymbolConfiguration(paletteColors: [tint])
         let image = NSImage(systemSymbolName: baseName, accessibilityDescription: "Sundial")?
             .withSymbolConfiguration(config)
         image?.isTemplate = false
+        return image
+    }
+
+    /// Composite a sun glyph wearing sunglasses. There's no built-in SF Symbol for this combo,
+    /// so we draw `sun.max.fill` then layer `sunglasses.fill` on top of it.
+    private func compositeShadedSun(tint: NSColor) -> NSImage? {
+        let size = NSSize(width: 22, height: 22)
+        let image = NSImage(size: size)
+        image.lockFocus()
+
+        let sunConfig = NSImage.SymbolConfiguration(pointSize: 16, weight: .medium)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [tint]))
+        if let sun = NSImage(systemSymbolName: "sun.max.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(sunConfig) {
+            sun.draw(in: NSRect(x: 0, y: 0, width: size.width, height: size.height))
+        }
+
+        // Sunglasses overlay — smaller, centred on the sun's face. Black for contrast against
+        // the warm/yellow sun beneath.
+        let glassesSize: CGFloat = 11
+        let glassesConfig = NSImage.SymbolConfiguration(pointSize: glassesSize, weight: .bold)
+            .applying(NSImage.SymbolConfiguration(paletteColors: [.black]))
+        if let glasses = NSImage(systemSymbolName: "sunglasses.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(glassesConfig) {
+            glasses.draw(in: NSRect(
+                x: (size.width - glassesSize) / 2,
+                y: (size.height - glassesSize) / 2 - 1,   // sit slightly below centre
+                width: glassesSize,
+                height: glassesSize
+            ))
+        }
+
+        image.unlockFocus()
+        image.isTemplate = false
         return image
     }
 
@@ -138,10 +185,11 @@ final class StatusBarController: NSObject {
         case .dormant:
             return "Sundial — Waiting for sun"
         case .engaged:
+            let strength = String(format: "%.1f×", manager.currentEffectiveBoost)
             if let cost = manager.batteryCostMinutesPerHour {
-                return "Sundial — Boosting (≈ −\(cost) min/hr battery)"
+                return "Sundial — Boosting \(strength) (≈ −\(cost) min/hr battery)"
             }
-            return "Sundial — Boosting"
+            return "Sundial — Boosting \(strength)"
         }
     }
 

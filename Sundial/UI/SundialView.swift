@@ -84,13 +84,19 @@ struct SundialView: View {
     private var strengthSlider: some View {
         VStack(alignment: .leading, spacing: 6) {
             HStack {
-                Text("Boost strength")
+                Text("Boost ceiling")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 Spacer()
-                Text(String(format: "%.1f×", manager.boostStrength))
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
+                if manager.state == .engaged && manager.currentEffectiveBoost > 0 {
+                    Text(String(format: "%.1f× now / %.1f× max", manager.currentEffectiveBoost, manager.boostStrength))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text(String(format: "%.1f× max", manager.boostStrength))
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
             }
             Slider(
                 value: $manager.boostStrength,
@@ -98,6 +104,10 @@ struct SundialView: View {
                 step: 0.1
             )
             .controlSize(.small)
+            Text("Sundial boosts harder when the sun is stronger — up to this ceiling.")
+                .font(.caption2)
+                .foregroundStyle(.tertiary)
+                .fixedSize(horizontal: false, vertical: true)
         }
     }
 

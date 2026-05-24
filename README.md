@@ -11,7 +11,10 @@ You take your MacBook Pro outside. The screen vanishes in direct sun because mac
 Sundial unlocks that headroom *only when you need it*.
 
 - **Reactive brightness boost.** When macOS's brightness slider is pinned at max and stays there, Sundial requests EDR headroom from the panel — which lifts the backlight ceiling for everything on screen, not just our overlay. When you walk into shade and brightness drops, Sundial disengages within ten seconds. No always-on cost.
-- **Sun-aware** (v0.2). Knows where the sun is in your sky, how bright it actually is outside (W/m², via Open-Meteo), and when it's setting. Sundial *is* a sundial.
+- **Dynamic intensity** (v0.3). The boost isn't binary — it scales with the actual solar irradiance hitting your location. Overcast outside? 1.5×. Clear blue sky at noon? Up to your ceiling (default 2.5×, configurable to 4.0×). Sundial follows the sun.
+- **Side-edge "I'm boosting" indicator** (v0.3). A thin warm-orange light blooms on the right edge of your screen when Sundial engages and again whenever it pushes intensity higher. Fades out after a few seconds so it's not in your way.
+- **Sun puts on sunglasses** (v0.3). When the dynamic boost is pushing hard (effective > 2.0×), the menu bar sun icon literally wears shades. Glanceable signal that something is happening.
+- **Sun-aware.** Knows where the sun is in your sky, how bright it actually is outside (W/m², via Open-Meteo), and when it's setting. Sundial *is* a sundial.
 - **Today in the sun** panel — passively tracks how long the boost has been engaged, the average UV during boost time, and a fuzzy Vitamin D estimate. The menu bar icon develops a tan as the day's outdoor minutes add up.
 - **Soft engage/disengage.** The boost eases on over 800ms and off over 1.2s — sun-coming-out-from-behind-a-cloud rather than a light switch.
 - **Honest battery cost indicator.** Measures the real wattage delta on your specific machine via `ioreg AppleSmartBattery`, projects it as "≈ −N min / hr" so you can see what the boost actually costs.
@@ -132,10 +135,11 @@ Sundial/
     ├── SunPosition.swift          # Schlyter's algorithm — pure math, offline
     └── SolarContext.swift         # CLLocationManager + Open-Meteo weather
 Tests/
-├── BoostTriggerTests.swift        # 11 tests — hysteresis state machine
-├── SunPositionTests.swift         # 7 tests — sun azimuth/elevation accuracy
-└── DailySunLogTests.swift         # 11 tests — Vitamin D math, time-weighted averages
-                                   # Total: 29 tests, suite runs in ~40ms
+├── BoostTriggerTests.swift        # Hysteresis state machine, OS-cap regression pin
+├── SunPositionTests.swift         # Sun azimuth/elevation accuracy vs NOAA reference
+├── DailySunLogTests.swift         # Vitamin D math, time-weighted UV, UserDefaults isolation
+└── EffectiveBoostTests.swift      # Dynamic boost ramp from irradiance
+                                   # Total: 38 tests, suite runs in ~50ms
 ```
 
 Project file is regenerated from [`project.yml`](project.yml) via xcodegen — never edit `Sundial.xcodeproj` directly.
