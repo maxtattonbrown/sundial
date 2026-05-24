@@ -22,8 +22,15 @@ struct BoostTrigger {
 
     // MARK: - Tunables
 
-    var engageThreshold: Double = 0.99
-    var disengageThreshold: Double = 0.95
+    /// Slider value at or above which the boost should engage. Note: macOS auto-brightness
+    /// reserves headroom below 1.0 — observed cap is ~0.98 in direct sun on Apple Silicon
+    /// (the OS keeps a small margin for True Tone / Night Shift / HDR rendering). So 0.95
+    /// is the practical "user wants max brightness" reading, not 0.99 or 1.0.
+    var engageThreshold: Double = 0.95
+    /// Slider value at or below which the disengage countdown starts. The gap between this
+    /// and `engageThreshold` is the dead zone — it stops the boost flutter-oscillating when
+    /// brightness sits near the top of the range.
+    var disengageThreshold: Double = 0.85
     var engageRequiredReads: Int = 2
     var disengageDwellSeconds: TimeInterval = 10.0
 

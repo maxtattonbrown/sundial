@@ -96,8 +96,8 @@ final class BoostTriggerTests: XCTestCase {
     func test_engageThresholdIsInclusive() {
         var trigger = BoostTrigger()
         let transitions = run(&trigger, events: [
-            (0.99, 0),
-            (0.99, 3),
+            (0.95, 0),
+            (0.95, 3),
         ])
         XCTAssertEqual(transitions, [.noChange, .engaged])
     }
@@ -107,24 +107,37 @@ final class BoostTriggerTests: XCTestCase {
         _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])  // engaged
 
         let transitions = run(&trigger, events: [
-            (0.95, 6),   // exactly at threshold — start dwell
-            (0.95, 17),  // 11s in — disengage
+            (0.85, 6),   // exactly at threshold — start dwell
+            (0.85, 17),  // 11s in — disengage
         ])
         XCTAssertEqual(transitions, [.noChange, .disengaged])
     }
 
     func test_betweenThresholdsCountsAsBoostedNotDisengaging() {
-        // 0.96 is below engage (0.99) but above disengage (0.95) — should keep us engaged
+        // 0.90 is below engage (0.95) but above disengage (0.85) — should keep us engaged
         // without starting the disengage countdown.
         var trigger = BoostTrigger()
         _ = run(&trigger, events: [(1.0, 0), (1.0, 3)])  // engaged
 
         let transitions = run(&trigger, events: [
-            (0.96, 6),
-            (0.96, 100),
+            (0.90, 6),
+            (0.90, 100),
         ])
         XCTAssertEqual(transitions, [.noChange, .noChange])
         XCTAssertEqual(trigger.state, .engaged(lowSince: nil))
+    }
+
+    /// macOS auto-brightness caps the slider value at ~0.98 even in direct sun on Apple
+    /// Silicon. Sundial v0.2.0-v0.2.1 had a 0.99 engage threshold and would never fire
+    /// in real outdoor conditions — this test pins the regression that prompted v0.2.2.
+    func test_engagesWhenAutoBrightnessCapsBelow1() {
+        var trigger = BoostTrigger()
+        let transitions = run(&trigger, events: [
+            (0.98, 0),   // sustained reading at the practical OS ceiling
+            (0.98, 3),
+        ])
+        XCTAssertEqual(transitions, [.noChange, .engaged],
+            "Real outdoor brightness caps below 1.0 — the trigger must still engage")
     }
 
     // MARK: - Reset

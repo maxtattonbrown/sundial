@@ -107,7 +107,7 @@ struct SundialView: View {
                     .foregroundStyle(.secondary)
             }
             if manager.isOn && manager.state == .dormant {
-                Text("Engages when the OS brightness slider is pinned at max.")
+                Text("Engages when the OS brightness slider is at the top (≥ 95%). macOS auto-brightness caps slightly below 1.0 in direct sun, so the threshold isn't literally max.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
                     .fixedSize(horizontal: false, vertical: true)
