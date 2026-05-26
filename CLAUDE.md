@@ -11,6 +11,17 @@ Plus solar awareness (sun position, sunset countdown, "Today in the Sun" log wit
 
 True Tone is intentionally **not** included — under blue daylight it shifts cooler, which actually helps outdoor readability. See plan at `~/.claude/plans/could-we-make-it-swift-mountain.md`.
 
+## Current state (2026-05-26)
+
+- **`main` is the shipping line**: v0.5.1 + location fix (`db0c3f1`). UI is the **UnifiedBar** — a continuous brightness fill (left) crossing into 4 boost-intensity chunks (right). Public on GitHub, listed on the profile README.
+- **Dynamic boost**: `computeEffectiveBoost` ramps 1.5×→3.0× as irradiance climbs 200→800 W/m² (UK-realistic ceiling). Gated on solar availability — see open items.
+- **Parked experiment**: branch `the-sun` (tag `v0.6.0-alpha`) replaced the bar with a single animated sun (UV-driven core + boost-driven halo). Abandoned 2026-05-26 — "too literal." Kept on GitHub as the record; `main` is canonical.
+
+### Open items / next session
+1. **Verify location on real hardware** (the one thing left). The "only ever boosts to the same level" bug was the boost silently flooring at 1.5× because solar data was never available — root cause was the wrong Info.plist key (`NSLocationUsageDescription` instead of the required `NSLocationWhenInUseUsageDescription`), fixed in `db0c3f1`. Key is confirmed present in the built plist, but a *grant* is unverified: ad-hoc signing (`TeamIdentifier=not set`) wipes the TCC grant on every rebuild, and background launches can't click the prompt. Launch from `/Applications`, click Allow, confirm the 4 chunks climb with the sun (≈2 mid-morning → ≈4 at noon).
+2. **If location won't grant** even with Location Services on → decouple the boost from location: usable default boost standalone, weather/UV as a *bonus* refinement, not a gate. Today a permission failure silently cripples the headline feature. See `lesson_silent_dependency_floor` in memory.
+3. **Deferred review finding**: per-zone fast/slow dwell tracking to stop oscillation across the 0.60 fast-disengage boundary (`BoostTrigger`).
+
 ## Build
 
 ```
